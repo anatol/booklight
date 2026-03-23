@@ -131,7 +131,7 @@ private struct LibraryContentView: View {
                 if controller.books.isEmpty {
                     Text("No PDF or EPUB files found in the selected folder.")
                         .foregroundStyle(.secondary)
-                } else if controller.activeBooks.isEmpty && controller.otherBooks.isEmpty && !controller.searchText.isEmpty {
+                } else if controller.activeBooks.isEmpty && controller.otherBooks.isEmpty && !controller.debouncedSearchText.isEmpty {
                     Text("No books match “\(controller.searchText)”")
                         .foregroundStyle(.secondary)
                 } else {

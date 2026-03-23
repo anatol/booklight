@@ -1,3 +1,4 @@
+import Combine
 import CryptoKit
 import Foundation
 import SwiftUI
@@ -10,6 +11,9 @@ final class LibraryController: ObservableObject {
     @Published private(set) var lastScanAt: Date?
     @Published var isPickingLibrary = false
     @Published var searchText = ""
+    /// The query actually used for filtering, updated after a short debounce
+    /// so that rapid keystrokes don't block the main thread with fuzzy scoring.
+    @Published private(set) var debouncedSearchText = ""
     @Published var errorMessage: String?
 
     private let bookmarkKey = "BookReader.selectedLibraryBookmark"
@@ -19,6 +23,7 @@ final class LibraryController: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var writeTasks: [String: Task<Void, Never>] = [:]
     private var scopedLibraryURL: URL?
+    private nonisolated(unsafe) var searchDebounceSubscription: AnyCancellable?
 
 #if targetEnvironment(macCatalyst)
     private let bookmarkCreationOptions: URL.BookmarkCreationOptions = [.withSecurityScope]
@@ -31,12 +36,20 @@ final class LibraryController: ObservableObject {
     init() {
         restoreLibrary()
         startPolling()
+
+        // Debounce search input so fuzzy-scoring large libraries doesn't
+        // block the main thread on every keystroke.
+        searchDebounceSubscription = $searchText
+            .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
+            .removeDuplicates()
+            .assign(to: \.debouncedSearchText, on: self)
     }
 
     deinit {
         refreshTask?.cancel()
         pollTask?.cancel()
         writeTasks.values.forEach { $0.cancel() }
+        searchDebounceSubscription?.cancel()
         scopedLibraryURL?.stopAccessingSecurityScopedResource()
     }
 
@@ -84,7 +97,7 @@ final class LibraryController: ObservableObject {
     }
 
     private var normalizedQuery: String {
-        Self.normalized(searchText)
+        Self.normalized(debouncedSearchText)
     }
 
     private static func normalized(_ value: String) -> String {

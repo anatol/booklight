@@ -4,9 +4,12 @@
 
 ## What It Does
 
-- Opens a flat folder of `PDF` and `EPUB` files as the library.
-- Shows unfinished books first in an `Active Books` section.
-- Tracks reading position and last-opened time.
+- **Active Book Tracking:** Reading progress and actively read books are copied to a single tracking directory (e.g. synced via Syncthing).
+- **Multiple Local Libraries:** Add many read-only "Local Library" folders that the app scans without modifying.
+- **Robust Book Deduplication:** Books are identified and deduplicated using content hashes (SHA-256), combining the tracking directory and local libraries.
+- **Efficient Caching:** Extracted artwork and computed file hashes are aggressively cached on disk (`~/Library/Caches`) to keep library scans instant.
+- **First-Class iPad/Mac UI:** Clean sidebar layouts, keyboard navigation, dark mode support.
+- **Privacy-First:** No analytics, no cloud accounts, no network calls. Works 100% offline.
 - Stores library metadata in `.book-app/` inside the selected folder.
 - Detects added and removed books during periodic rescans.
 - Merges progress by keeping the furthest reading position.

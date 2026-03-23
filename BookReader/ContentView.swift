@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var controller = LibraryController()
+    @State private var showingSettings = false
 
     var body: some View {
         NavigationStack {
@@ -13,11 +14,11 @@ struct ContentView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .principal) {
-                        LibraryTitleView(libraryURL: controller.libraryURL)
+                        LibraryTitleView(libraryURL: controller.trackingDirectoryURL)
                     }
 
                     ToolbarItemGroup(placement: .topBarTrailing) {
-                        if controller.libraryURL != nil {
+                        if controller.trackingDirectoryURL != nil {
                             Button {
                                 controller.refresh(silently: false)
                             } label: {
@@ -26,9 +27,9 @@ struct ContentView: View {
                         }
 
                         Button {
-                            controller.isPickingLibrary = true
+                            showingSettings = true
                         } label: {
-                            Label("Choose Library", systemImage: "folder")
+                            Label("Settings", systemImage: "gearshape")
                         }
                     }
                 }
@@ -40,18 +41,21 @@ struct ContentView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             }
         }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView(controller: controller)
+        }
         .fileImporter(
-            isPresented: $controller.isPickingLibrary,
+            isPresented: $controller.isPickingTrackingDirectory,
             allowedContentTypes: [.folder],
             allowsMultipleSelection: false
         ) { result in
             switch result {
             case let .success(urls):
                 if let firstURL = urls.first {
-                    controller.handlePickedLibrary(.success(firstURL))
+                    controller.handlePickedTrackingDirectory(.success(firstURL))
                 }
             case let .failure(error):
-                controller.handlePickedLibrary(.failure(error))
+                controller.handlePickedTrackingDirectory(.failure(error))
             }
         }
         .alert(
@@ -86,7 +90,7 @@ private struct LibraryContentView: View {
 
     var body: some View {
         Group {
-            if controller.libraryURL == nil {
+            if controller.trackingDirectoryURL == nil {
                 emptyLibraryView
             } else {
                 libraryView
@@ -105,18 +109,18 @@ private struct LibraryContentView: View {
                 .shadow(color: .black.opacity(0.18), radius: 22, y: 10)
 
             VStack(spacing: 8) {
-                Text("Choose a Book Folder")
+                Text("Choose Tracking Directory")
                     .font(.title2.weight(.semibold))
 
-                Text("Pick a flat directory of PDF and EPUB files. The app will create `.book-app` inside that folder and keep reading progress synced there.")
+                Text("Pick a folder to store currently active books and reading progress. Local libraries can be added later in Settings.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 520)
             }
 
-            Button("Choose Library") {
-                controller.isPickingLibrary = true
+            Button("Choose Tracking Directory") {
+                controller.isPickingTrackingDirectory = true
             }
             .buttonStyle(.borderedProminent)
         }
@@ -139,7 +143,8 @@ private struct LibraryContentView: View {
                         BookGallerySection(
                             title: "Active Books",
                             books: controller.activeBooks,
-                            controller: controller
+                            controller: controller,
+                            isActiveSection: true
                         )
                     }
 
@@ -147,7 +152,8 @@ private struct LibraryContentView: View {
                         BookGallerySection(
                             title: controller.activeBooks.isEmpty ? "Books" : "Library",
                             books: controller.otherBooks,
-                            controller: controller
+                            controller: controller,
+                            isActiveSection: false
                         )
                     }
                 }
@@ -178,6 +184,7 @@ private struct BookGallerySection: View {
     let title: String
     let books: [Book]
     @ObservedObject var controller: LibraryController
+    var isActiveSection: Bool = false
 
     private let columns = [
         GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 18, alignment: .top)
@@ -194,6 +201,15 @@ private struct BookGallerySection: View {
                         BookCard(book: book, fileURL: controller.absoluteURL(for: book))
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        if isActiveSection {
+                            Button(role: .destructive) {
+                                controller.removeFromActive(book: book)
+                            } label: {
+                                Label("Remove from Active", systemImage: "trash")
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -213,7 +229,7 @@ private struct BookCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ZStack(alignment: .topTrailing) {
-                BookThumbnailView(fileURL: fileURL, format: book.format)
+                BookThumbnailView(bookID: book.id, fileURL: fileURL, format: book.format)
                     .aspectRatio(0.72, contentMode: .fit)
                     .shadow(color: .black.opacity(0.14), radius: 14, y: 8)
 
@@ -264,3 +280,101 @@ private struct BookCard: View {
             .background(tint, in: Capsule())
     }
 }
+
+struct SettingsView: View {
+    @ObservedObject var controller: LibraryController
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var isPickingTrackingDirectory = false
+    @State private var isPickingLocalLibrary = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(
+                    header: Text("Tracking Directory"),
+                    footer: Text("This folder stores your active books and reading progress.")
+                ) {
+                    HStack {
+                        if let url = controller.trackingDirectoryURL {
+                            Text(url.path())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        } else {
+                            Text("Not Selected")
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Button("Change...") {
+                            isPickingTrackingDirectory = true
+                        }
+                    }
+                }
+                .fileImporter(
+                    isPresented: $isPickingTrackingDirectory,
+                    allowedContentTypes: [.folder],
+                    allowsMultipleSelection: false
+                ) { result in
+                    switch result {
+                    case let .success(urls):
+                        if let firstURL = urls.first {
+                            controller.handlePickedTrackingDirectory(.success(firstURL))
+                        }
+                    case let .failure(error):
+                        controller.handlePickedTrackingDirectory(.failure(error))
+                    }
+                }
+                
+                Section(
+                    header: Text("Local Libraries"),
+                    footer: Text("These folders are scanned for books, but their contents are never modified by the app.")
+                ) {
+                    List {
+                        ForEach(Array(controller.localLibraries.enumerated()), id: \.element) { index, url in
+                            Text(url.path())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .onDelete { indexSet in
+                            for index in indexSet {
+                                controller.removeLocalLibrary(at: index)
+                            }
+                        }
+                    }
+                    
+                    Button {
+                        isPickingLocalLibrary = true
+                    } label: {
+                        Label("Add Local Library", systemImage: "plus")
+                    }
+                }
+                .fileImporter(
+                    isPresented: $isPickingLocalLibrary,
+                    allowedContentTypes: [.folder],
+                    allowsMultipleSelection: false
+                ) { result in
+                    switch result {
+                    case let .success(urls):
+                        if let firstURL = urls.first {
+                            controller.handlePickedLocalLibrary(.success(firstURL))
+                        }
+                    case let .failure(error):
+                        controller.handlePickedLocalLibrary(.failure(error))
+                    }
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+

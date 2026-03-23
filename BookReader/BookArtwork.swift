@@ -14,6 +14,7 @@ struct BooklightIconView: View {
 struct BookThumbnailView: View {
     @Environment(\.displayScale) private var displayScale
 
+    let bookID: String
     let fileURL: URL?
     let format: BookFormat
 
@@ -68,12 +69,26 @@ struct BookThumbnailView: View {
             }
             return
         }
+        
+        let nsCacheKey = bookID as NSString
 
         if let cached = await MainActor.run(body: {
-            BookThumbnailCache.cache.object(forKey: fileURL as NSURL)
+            BookThumbnailCache.cache.object(forKey: nsCacheKey)
         }) {
             await MainActor.run {
                 image = cached
+            }
+            return
+        }
+        
+        let urls = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
+        let thumbnailsDir = urls[0].appending(path: "com.anatol.bookreader/thumbnails", directoryHint: .isDirectory)
+        let diskURL = thumbnailsDir.appending(path: "\(bookID).png")
+        
+        if let data = try? Data(contentsOf: diskURL), let uiImage = UIImage(data: data) {
+            await MainActor.run {
+                BookThumbnailCache.cache.setObject(uiImage, forKey: nsCacheKey)
+                image = uiImage
             }
             return
         }
@@ -89,12 +104,19 @@ struct BookThumbnailView: View {
 
         do {
             let representation = try await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
+            let generatedImage = representation.uiImage
+
+            if let pngData = generatedImage.pngData() {
+                try? FileManager.default.createDirectory(at: thumbnailsDir, withIntermediateDirectories: true)
+                try? pngData.write(to: diskURL, options: .atomic)
+            }
+
             await MainActor.run {
-                BookThumbnailCache.cache.setObject(representation.uiImage, forKey: fileURL as NSURL)
+                BookThumbnailCache.cache.setObject(generatedImage, forKey: nsCacheKey)
             }
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                image = representation.uiImage
+                image = generatedImage
             }
         } catch {
             guard !Task.isCancelled else { return }
@@ -107,7 +129,7 @@ struct BookThumbnailView: View {
 
 @MainActor
 private enum BookThumbnailCache {
-    static let cache = NSCache<NSURL, UIImage>()
+    static let cache = NSCache<NSString, UIImage>()
 }
 
 private struct SVGResourceView: UIViewRepresentable {

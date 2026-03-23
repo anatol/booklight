@@ -57,48 +57,15 @@ struct BookProgressState: Codable, Hashable, Sendable {
     }
 }
 
-struct LibraryBookRecord: Codable, Hashable, Sendable {
-    var id: String
-    var title: String
-    var fileName: String
-    var relativePath: String
-    var format: BookFormat
-    var fileSize: Int64
-    var addedAt: Date
-    var modifiedAt: Date
-    var lastKnownProgress: Double
-    var lastOpenedAt: Date?
-    var isFinished: Bool
-}
-
-struct LibraryDatabase: Codable, Sendable {
-    var schemaVersion: Int = 1
-    var scannedAt: Date
-    var books: [LibraryBookRecord]
-}
-
 struct Book: Identifiable, Hashable, Sendable {
     var id: String
     var title: String
-    var fileName: String
-    var relativePath: String
+    var fileURL: URL
     var format: BookFormat
     var fileSize: Int64
     var addedAt: Date
     var modifiedAt: Date
     var progressState: BookProgressState?
-
-    init(record: LibraryBookRecord, progressState: BookProgressState?) {
-        id = record.id
-        title = record.title
-        fileName = record.fileName
-        relativePath = record.relativePath
-        format = record.format
-        fileSize = record.fileSize
-        addedAt = record.addedAt
-        modifiedAt = record.modifiedAt
-        self.progressState = progressState
-    }
 
     var progress: Double {
         progressState?.progress ?? 0
@@ -126,9 +93,16 @@ struct Book: Identifiable, Hashable, Sendable {
     }
 }
 
-struct LibraryScanResult: Sendable {
-    var database: LibraryDatabase
-    var books: [Book]
+struct FileHashRecord: Codable, Hashable, Sendable {
+    var path: String
+    var fileSize: Int64
+    var modifiedAt: Date
+    var contentHash: String
+}
+
+struct FileHashCache: Codable, Sendable {
+    var version: Int = 1
+    var records: [String: FileHashRecord] = [:] // url.path -> record
 }
 
 extension BookProgressState {

@@ -56,10 +56,15 @@ final class EPUBScrollProxy: ObservableObject {
             root.style.fontSize = '\(fontSizePercent)%';
             document.body.style.webkitTextSizeAdjust = '\(fontSizePercent)%';
 
-            // After the DOM reflows, restore the reading position using the saved ratio.
+            // After the DOM reflows, restore the reading position.
+            // Prefer the fine-grained center progress, or fallback to ratio.
             requestAnimationFrame(function() {
-                var newMaxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
-                window.scrollTo(0, newMaxScroll * progressRatio);
+                if (window.currentCenterProgress && typeof window.restoreCenterProgress === 'function') {
+                    window.restoreCenterProgress(window.currentCenterProgress);
+                } else {
+                    var newMaxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
+                    window.scrollTo(0, newMaxScroll * progressRatio);
+                }
             });
         })();
         """
@@ -244,42 +249,88 @@ private struct EPUBWebView: UIViewRepresentable {
     /// chapterProgress (within that chapter), and overallProgress (across entire document).
     static let scrollTrackingScript = """
     window.isReadyForProgress = false;
-    const sendProgress = () => {
-      if (!window.isReadyForProgress) return;
-      const root = document.documentElement;
-      const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
-      const overallProgress = Math.max(0, Math.min(1, window.scrollY / maxScroll));
+    window.currentCenterProgress = null;
+    let isResizing = false;
+    let resizeTimeout = null;
 
-      // Find which chapter div is at (or just above) the viewport top.
+    window.computeCenterProgress = () => {
+      const centerY = window.innerHeight / 2;
       const chapters = document.querySelectorAll('.epub-chapter');
       let currentChapter = 0;
       let chapterProgress = 0;
       for (let i = chapters.length - 1; i >= 0; i--) {
         const rect = chapters[i].getBoundingClientRect();
-        if (rect.top <= 10) {
+        if (rect.top <= centerY) {
           currentChapter = parseInt(chapters[i].dataset.chapterIndex) || 0;
           const chapterHeight = Math.max(rect.height, 1);
-          chapterProgress = Math.max(0, Math.min(1, -rect.top / chapterHeight));
+          chapterProgress = Math.max(0, Math.min(1, (centerY - rect.top) / chapterHeight));
           break;
         }
       }
+      return { chapterIndex: currentChapter, chapterProgress: chapterProgress };
+    };
+
+    window.restoreCenterProgress = (target) => {
+      if (!target) return;
+      const chapter = document.getElementById('chapter-' + target.chapterIndex);
+      if (chapter) {
+        const rect = chapter.getBoundingClientRect();
+        const chapterHeight = Math.max(rect.height, 1);
+        const offset = chapterHeight * target.chapterProgress;
+        window.scrollTo(0, window.scrollY + rect.top + offset - window.innerHeight / 2);
+      }
+    };
+
+    const sendProgress = () => {
+      if (!window.isReadyForProgress) return;
+
+      const root = document.documentElement;
+      const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
+      const overallProgress = Math.max(0, Math.min(1, window.scrollY / maxScroll));
+
+      if (!isResizing) {
+          window.currentCenterProgress = window.computeCenterProgress();
+      }
+
+      if (!window.currentCenterProgress) return;
 
       window.webkit.messageHandlers.readerProgress.postMessage({
-        chapterIndex: currentChapter,
-        chapterProgress: chapterProgress,
+        chapterIndex: window.currentCenterProgress.chapterIndex,
+        chapterProgress: window.currentCenterProgress.chapterProgress,
         overallProgress: overallProgress
       });
     };
 
-    let timeout = null;
+    let scrollTimeout = null;
     window.addEventListener('scroll', () => {
-      if (timeout) return;
-      timeout = setTimeout(() => {
-        timeout = null;
+      if (!isResizing) {
+          window.currentCenterProgress = window.computeCenterProgress();
+      }
+      if (scrollTimeout) return;
+      scrollTimeout = setTimeout(() => {
+        scrollTimeout = null;
         sendProgress();
       }, 120);
     }, { passive: true });
-    window.addEventListener('load', () => setTimeout(sendProgress, 80));
+
+    window.addEventListener('resize', () => {
+      isResizing = true;
+      if (window.currentCenterProgress) {
+        window.restoreCenterProgress(window.currentCenterProgress);
+      }
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        isResizing = false;
+        sendProgress();
+      }, 200);
+    });
+
+    window.addEventListener('load', () => setTimeout(() => {
+        if (!window.currentCenterProgress) {
+            window.currentCenterProgress = window.computeCenterProgress();
+        }
+        sendProgress();
+    }, 80));
     """
 
     // MARK: - Coordinator
@@ -349,12 +400,16 @@ private struct EPUBWebView: UIViewRepresentable {
                 const rect = chapter.getBoundingClientRect();
                 const chapterHeight = Math.max(rect.height, 1);
                 const offset = chapterHeight * \(target.chapterProgress.clampedToUnit);
-                window.scrollTo(0, window.scrollY + rect.top + offset);
+                window.scrollTo(0, window.scrollY + rect.top + offset - window.innerHeight / 2);
             } else {
                 const root = document.documentElement;
                 const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
                 window.scrollTo(0, maxScroll * \(target.overallProgress.clampedToUnit));
             }
+            window.currentCenterProgress = {
+                chapterIndex: \(target.chapterIndex),
+                chapterProgress: \(target.chapterProgress.clampedToUnit)
+            };
             """
 
             // Apply font size first, then scroll after reflow completes.

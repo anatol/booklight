@@ -16,7 +16,6 @@
 		AA0000000000000000000007 /* EPUBSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000017 /* EPUBSupport.swift */; };
 		AA0000000000000000000008 /* EPUBReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000018 /* EPUBReaderView.swift */; };
 		AA0000000000000000000009 /* BookArtwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000019 /* BookArtwork.swift */; };
-		AA000000000000000000000A /* booklight-icon.svg in Resources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001A /* booklight-icon.svg */; };
 		AA000000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001B /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -31,7 +30,6 @@
 		AA0000000000000000000017 /* EPUBSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBSupport.swift; sourceTree = "<group>"; };
 		AA0000000000000000000018 /* EPUBReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBReaderView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000019 /* BookArtwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookArtwork.swift; sourceTree = "<group>"; };
-		AA000000000000000000001A /* booklight-icon.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg; path = "booklight-icon.svg"; sourceTree = "<group>"; };
 		AA000000000000000000001B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -49,7 +47,6 @@
 		AA0000000000000000000030 = {
 			isa = PBXGroup;
 			children = (
-				AA000000000000000000001A /* booklight-icon.svg */,
 				AA0000000000000000000031 /* BookReader */,
 				AA0000000000000000000032 /* Products */,
 			);
@@ -137,7 +134,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AA000000000000000000000A /* booklight-icon.svg in Resources */,
 				AA000000000000000000000B /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

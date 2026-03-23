@@ -7,35 +7,31 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if controller.libraryURL == nil {
-                    emptyLibraryView
-                } else {
-                    libraryView
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    LibraryTitleView(libraryURL: controller.libraryURL)
-                }
+            // Wrapped in a child view so it can read @Environment(\.isSearching)
+            // and clear the search text when the user cancels/dismisses search.
+            LibraryContentView(controller: controller)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        LibraryTitleView(libraryURL: controller.libraryURL)
+                    }
 
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if controller.libraryURL != nil {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if controller.libraryURL != nil {
+                            Button {
+                                controller.refresh(silently: false)
+                            } label: {
+                                Label("Refresh", systemImage: "arrow.clockwise")
+                            }
+                        }
+
                         Button {
-                            controller.refresh(silently: false)
+                            controller.isPickingLibrary = true
                         } label: {
-                            Label("Refresh", systemImage: "arrow.clockwise")
+                            Label("Choose Library", systemImage: "folder")
                         }
                     }
-
-                    Button {
-                        controller.isPickingLibrary = true
-                    } label: {
-                        Label("Choose Library", systemImage: "folder")
-                    }
                 }
-            }
         }
         .overlay {
             if controller.isLoading {
@@ -77,6 +73,30 @@ struct ContentView: View {
             }
         }
         .searchable(text: $controller.searchText, prompt: "Search by title")
+    }
+
+}
+
+/// Child view that reads `@Environment(\.isSearching)` to detect when the user
+/// dismisses or cancels the search bar, and clears the search text so book
+/// filtering is removed and the default list is restored.
+private struct LibraryContentView: View {
+    @ObservedObject var controller: LibraryController
+    @Environment(\.isSearching) private var isSearching
+
+    var body: some View {
+        Group {
+            if controller.libraryURL == nil {
+                emptyLibraryView
+            } else {
+                libraryView
+            }
+        }
+        .onChange(of: isSearching) { _, searching in
+            if !searching {
+                controller.searchText = ""
+            }
+        }
     }
 
     private var emptyLibraryView: some View {

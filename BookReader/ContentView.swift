@@ -165,8 +165,8 @@ private struct BookGallerySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(title)
-                .font(.title3.weight(.semibold))
+//            Text(title)
+//                .font(.title3.weight(.semibold))
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
                 ForEach(books) { book in

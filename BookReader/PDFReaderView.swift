@@ -1,17 +1,64 @@
 @preconcurrency import PDFKit
 import SwiftUI
 
+/// Proxy object that bridges SwiftUI key events to the underlying PDFView,
+/// allowing Space / Shift+Space to scroll by one viewport height.
+@MainActor
+final class PDFScrollProxy: ObservableObject {
+    weak var pdfView: PDFView?
+
+    /// Scroll the PDF down by one viewport height (with slight overlap).
+    func scrollPageDown() {
+        guard let scrollView = findScrollView() else { return }
+        let pageHeight = scrollView.bounds.height * 0.9
+        let maxY = scrollView.contentSize.height - scrollView.bounds.height
+        let newY = min(scrollView.contentOffset.y + pageHeight, maxY)
+        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: newY), animated: true)
+    }
+
+    /// Scroll the PDF up by one viewport height (with slight overlap).
+    func scrollPageUp() {
+        guard let scrollView = findScrollView() else { return }
+        let pageHeight = scrollView.bounds.height * 0.9
+        let newY = max(scrollView.contentOffset.y - pageHeight, 0)
+        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: newY), animated: true)
+    }
+
+    /// PDFView embeds a UIScrollView as a subview; find it by traversal.
+    private func findScrollView() -> UIScrollView? {
+        guard let pdfView else { return nil }
+        for subview in pdfView.subviews {
+            if let scrollView = subview as? UIScrollView {
+                return scrollView
+            }
+        }
+        return nil
+    }
+}
+
 struct PDFBookView: View {
     let book: Book
     let bookURL: URL
     @ObservedObject var controller: LibraryController
+    @StateObject private var scrollProxy = PDFScrollProxy()
 
     var body: some View {
         PDFReaderRepresentable(
             documentURL: bookURL,
-            initialPageIndex: book.progressState?.pdfPageIndex ?? 0
+            initialPageIndex: book.progressState?.pdfPageIndex ?? 0,
+            scrollProxy: scrollProxy
         ) { pageIndex, pageCount in
             controller.savePDFPosition(for: book, pageIndex: pageIndex, pageCount: pageCount)
+        }
+        .focusable()
+        .onKeyPress(.space, phases: .down) { keyPress in
+            // Space scrolls down, Shift+Space scrolls up (like macOS Preview).
+            if keyPress.modifiers.contains(.shift) {
+                scrollProxy.scrollPageUp()
+            } else {
+                scrollProxy.scrollPageDown()
+            }
+            return .handled
         }
         .navigationTitle(book.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -25,6 +72,7 @@ struct PDFBookView: View {
 struct PDFReaderRepresentable: UIViewRepresentable {
     let documentURL: URL
     let initialPageIndex: Int
+    let scrollProxy: PDFScrollProxy
     let onPositionChange: (Int, Int) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -38,12 +86,15 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         pdfView.displayDirection = .vertical
         pdfView.displaysPageBreaks = true
         pdfView.backgroundColor = .secondarySystemBackground
+        // Wire up the scroll proxy so SwiftUI key events can drive scrolling.
+        scrollProxy.pdfView = pdfView
         context.coordinator.install(documentURL: documentURL, initialPageIndex: initialPageIndex, in: pdfView)
         return pdfView
     }
 
     func updateUIView(_ pdfView: PDFView, context: Context) {
         context.coordinator.onPositionChange = onPositionChange
+        scrollProxy.pdfView = pdfView
         context.coordinator.install(documentURL: documentURL, initialPageIndex: initialPageIndex, in: pdfView)
     }
 

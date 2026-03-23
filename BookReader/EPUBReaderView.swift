@@ -1,6 +1,23 @@
 import SwiftUI
 import WebKit
 
+/// Proxy object that bridges SwiftUI key events to the underlying WKWebView,
+/// allowing Space / Shift+Space to scroll by one viewport height.
+@MainActor
+final class EPUBScrollProxy: ObservableObject {
+    weak var webView: WKWebView?
+
+    /// Scroll the EPUB content down by ~90% of the viewport (slight overlap for context).
+    func scrollPageDown() {
+        webView?.evaluateJavaScript("window.scrollBy(0, window.innerHeight * 0.9)")
+    }
+
+    /// Scroll the EPUB content up by ~90% of the viewport.
+    func scrollPageUp() {
+        webView?.evaluateJavaScript("window.scrollBy(0, -window.innerHeight * 0.9)")
+    }
+}
+
 struct EPUBBookView: View {
     let book: Book
     let bookURL: URL
@@ -10,6 +27,7 @@ struct EPUBBookView: View {
     @State private var loadError: String?
     @State private var isPreparing = true
     @State private var navigationRequest = EPUBNavigationRequest(chapterIndex: 0, chapterProgress: 0)
+    @StateObject private var scrollProxy = EPUBScrollProxy()
 
     var body: some View {
         Group {
@@ -17,7 +35,8 @@ struct EPUBBookView: View {
                 VStack(spacing: 0) {
                     EPUBWebView(
                         document: document,
-                        request: navigationRequest
+                        request: navigationRequest,
+                        scrollProxy: scrollProxy
                     ) { chapterIndex, chapterProgress in
                         let clampedIndex = min(max(chapterIndex, 0), max(document.spine.count - 1, 0))
                         let clampedProgress = chapterProgress.clampedToUnit
@@ -43,6 +62,16 @@ struct EPUBBookView: View {
             } else {
                 ContentUnavailableView("Could Not Open EPUB", systemImage: "exclamationmark.triangle", description: Text(loadError ?? "Unknown error"))
             }
+        }
+        .focusable()
+        .onKeyPress(.space, phases: .down) { keyPress in
+            // Space scrolls down, Shift+Space scrolls up (like macOS Preview).
+            if keyPress.modifiers.contains(.shift) {
+                scrollProxy.scrollPageUp()
+            } else {
+                scrollProxy.scrollPageDown()
+            }
+            return .handled
         }
         .navigationTitle(book.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -132,6 +161,7 @@ private struct EPUBNavigationRequest: Equatable {
 private struct EPUBWebView: UIViewRepresentable {
     let document: EPUBDocument
     let request: EPUBNavigationRequest
+    let scrollProxy: EPUBScrollProxy
     let onProgressChange: (Int, Double) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -152,6 +182,8 @@ private struct EPUBWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        // Wire up scroll proxy so SwiftUI key events can drive scrolling.
+        scrollProxy.webView = webView
         context.coordinator.attach(webView)
         context.coordinator.load(request: request)
         return webView
@@ -160,6 +192,7 @@ private struct EPUBWebView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.document = document
         context.coordinator.onProgressChange = onProgressChange
+        scrollProxy.webView = webView
         context.coordinator.load(request: request)
     }
 

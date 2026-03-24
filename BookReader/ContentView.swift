@@ -6,11 +6,18 @@ struct ContentView: View {
     @StateObject private var controller = LibraryController()
     @State private var showingSettings = false
 
+    /// Builds the window title: "Booklight - ~/path/to/dir" or just "Booklight" if no directory set.
+    static func windowTitle(for trackingURL: URL?) -> String {
+        guard let url = trackingURL else { return "Booklight" }
+        return "Booklight - \(displayPath(for: url))"
+    }
+
     var body: some View {
         NavigationStack {
             // Wrapped in a child view so it can read @Environment(\.isSearching)
             // and clear the search text when the user cancels/dismisses search.
             LibraryContentView(controller: controller)
+                .navigationTitle(Self.windowTitle(for: controller.trackingDirectoryURL))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .principal) {
@@ -281,6 +288,19 @@ private struct BookCard: View {
     }
 }
 
+/// Formats a directory path for display, replacing the home directory prefix with "~".
+private func displayPath(for url: URL) -> String {
+    var path = url.path()
+    if path.hasSuffix("/") && path.count > 1 { path = String(path.dropLast()) }
+    let home = NSHomeDirectory()
+    if path == home {
+        return "~"
+    } else if path.hasPrefix(home + "/") {
+        return "~" + path.dropFirst(home.count)
+    }
+    return path
+}
+
 struct SettingsView: View {
     @ObservedObject var controller: LibraryController
     @Environment(\.dismiss) private var dismiss
@@ -297,7 +317,7 @@ struct SettingsView: View {
                 ) {
                     HStack {
                         if let url = controller.trackingDirectoryURL {
-                            Text(url.path())
+                            Text(displayPath(for: url))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         } else {
@@ -333,7 +353,7 @@ struct SettingsView: View {
                 ) {
                     List {
                         ForEach(Array(controller.localLibraries.enumerated()), id: \.element) { index, url in
-                            Text(url.path())
+                            Text(displayPath(for: url))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }

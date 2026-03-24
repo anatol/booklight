@@ -61,8 +61,7 @@ struct PDFBookView: View {
             }
             return .handled
         }
-        .navigationTitle(book.title)
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
         .task(id: book.id) {
             controller.markOpened(book)
         }

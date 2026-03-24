@@ -135,8 +135,7 @@ struct EPUBBookView: View {
             controller.saveEPUBFontSize(for: book, fontSizePercent: scrollProxy.fontSizePercent)
             return .handled
         }
-        .navigationTitle(book.title)
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
         .task(id: book.id) {
             // Restore saved font size preference before the document loads,
             // so it's ready to apply when the web view finishes navigation.

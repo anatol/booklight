@@ -7,7 +7,7 @@ import SwiftUI
 final class LibraryController: ObservableObject {
     @Published private(set) var trackingDirectoryURL: URL?
     @Published private(set) var localLibraries: [URL] = []
-    
+
     @Published private(set) var books: [Book] = []
     @Published private(set) var isLoading = false
     @Published private(set) var lastScanAt: Date?
@@ -26,25 +26,26 @@ final class LibraryController: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
     private var writeTasks: [String: Task<Void, Never>] = [:]
-    
+
     private var scopedTrackingDirectoryURL: URL?
     private var scopedLocalLibraries: [URL] = []
-    
+
     private nonisolated(unsafe) var searchDebounceSubscription: AnyCancellable?
 
-#if targetEnvironment(macCatalyst)
-    private let bookmarkCreationOptions: URL.BookmarkCreationOptions = [.withSecurityScope]
-    private let bookmarkResolutionOptions: URL.BookmarkResolutionOptions = [.withSecurityScope]
-#else
-    private let bookmarkCreationOptions: URL.BookmarkCreationOptions = []
-    private let bookmarkResolutionOptions: URL.BookmarkResolutionOptions = []
-#endif
+    #if targetEnvironment(macCatalyst)
+        private let bookmarkCreationOptions: URL.BookmarkCreationOptions = [.withSecurityScope]
+        private let bookmarkResolutionOptions: URL.BookmarkResolutionOptions = [.withSecurityScope]
+    #else
+        private let bookmarkCreationOptions: URL.BookmarkCreationOptions = []
+        private let bookmarkResolutionOptions: URL.BookmarkResolutionOptions = []
+    #endif
 
     init() {
         restoreLibraries()
         startPolling()
 
-        searchDebounceSubscription = $searchText
+        searchDebounceSubscription =
+            $searchText
             .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
             .removeDuplicates()
             .assign(to: \.debouncedSearchText, on: self)
@@ -63,8 +64,9 @@ final class LibraryController: ObservableObject {
         visibleBooks(from: books)
             .filter(\.isActive)
             .sorted {
-                ($0.lastOpenedAt ?? .distantPast, fuzzyScore(for: $0), $0.title.localizedLowercase) >
-                ($1.lastOpenedAt ?? .distantPast, fuzzyScore(for: $1), $1.title.localizedLowercase)
+                ($0.lastOpenedAt ?? .distantPast, fuzzyScore(for: $0), $0.title.localizedLowercase) > (
+                    $1.lastOpenedAt ?? .distantPast, fuzzyScore(for: $1), $1.title.localizedLowercase
+                )
             }
     }
 
@@ -151,53 +153,55 @@ final class LibraryController: ObservableObject {
 
     func handlePickedTrackingDirectory(_ result: Result<URL, Error>) {
         switch result {
-        case let .success(url):
+        case .success(let url):
             do {
                 try selectTrackingDirectory(at: url)
             } catch {
                 errorMessage = error.localizedDescription
             }
-        case let .failure(error):
+        case .failure(let error):
             errorMessage = error.localizedDescription
         }
     }
-    
+
     func handlePickedLocalLibrary(_ result: Result<URL, Error>) {
         switch result {
-        case let .success(url):
+        case .success(let url):
             do {
                 try addLocalLibrary(at: url)
             } catch {
                 errorMessage = error.localizedDescription
             }
-        case let .failure(error):
+        case .failure(let error):
             errorMessage = error.localizedDescription
         }
     }
-    
+
     func removeLocalLibrary(at index: Int) {
         guard index >= 0 && index < localLibraries.count else { return }
         scopedLocalLibraries[index].stopAccessingSecurityScopedResource()
         scopedLocalLibraries.remove(at: index)
         localLibraries.remove(at: index)
-        
-        let bookmarks = scopedLocalLibraries.compactMap { try? $0.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil) }
+
+        let bookmarks = scopedLocalLibraries.compactMap {
+            try? $0.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+        }
         defaults.set(bookmarks, forKey: localLibrariesKey)
-        
+
         refresh(silently: false)
     }
-    
+
     func removeFromActive(book: Book) {
         // Find if it's in tracking directory
         guard let trackingDirectoryURL else { return }
         let trackingBooksURL = trackingDirectoryURL.appending(path: "books", directoryHint: .isDirectory)
         let stateDirectory = trackingDirectoryURL.appending(path: "progress", directoryHint: .isDirectory)
-        
+
         // Remove file
         try? FileManager.default.removeItem(at: trackingBooksURL.appending(path: book.fileURL.lastPathComponent))
         // Remove progress
         try? FileManager.default.removeItem(at: stateDirectory.appending(path: "\(book.id).json"))
-        
+
         refresh(silently: true)
     }
 
@@ -242,50 +246,52 @@ final class LibraryController: ObservableObject {
     func absoluteURL(for book: Book) -> URL? {
         return book.fileURL
     }
-    
+
     private func ensureBookInTrackingDirectory(_ book: Book) throws -> Book {
         guard let trackingDirectoryURL else { throw LibraryError.accessDenied }
         let trackingBooksURL = trackingDirectoryURL.appending(path: "books", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: trackingBooksURL, withIntermediateDirectories: true)
-        
+
         // If the book is already in the tracking directory, return it
         if book.fileURL.path().hasPrefix(trackingDirectoryURL.path()) {
             return book
         }
-        
+
         // Ensure name uniqueness in tracking directory, though preserving name is required
         let destURL = trackingBooksURL.appending(path: book.fileURL.lastPathComponent)
-        
+
         if !FileManager.default.fileExists(atPath: destURL.path()) {
             try FileManager.default.copyItem(at: book.fileURL, to: destURL)
         }
-        
+
         var updated = book
         updated.fileURL = destURL
-        
+
         // Update local memory so we don't need a full refresh immediately
         if let idx = books.firstIndex(where: { $0.id == book.id }) {
             books[idx] = updated
         }
-        
+
         return updated
     }
 
     func markOpened(_ incomingBook: Book) {
         do {
             let book = try ensureBookInTrackingDirectory(incomingBook)
-            var state = book.progressState ?? BookProgressState(
-                bookID: book.id,
-                updatedAt: .now,
-                lastOpenedAt: .now,
-                progress: 0,
-                isFinished: false,
-                pdfPageIndex: nil,
-                pdfPageCount: nil,
-                epubChapterIndex: nil,
-                epubChapterPath: nil,
-                epubChapterProgress: nil
-            )
+            var state =
+                book.progressState
+                ?? BookProgressState(
+                    bookID: book.id,
+                    updatedAt: .now,
+                    lastOpenedAt: .now,
+                    progress: 0,
+                    isFinished: false,
+                    pdfPageIndex: nil,
+                    pdfPageCount: nil,
+                    epubChapterIndex: nil,
+                    epubChapterPath: nil,
+                    epubChapterProgress: nil
+                )
             state.updatedAt = .now
             state.lastOpenedAt = .now
             apply(state: state.normalized(), toBookID: book.id)
@@ -296,7 +302,8 @@ final class LibraryController: ObservableObject {
     }
 
     func savePDFPosition(for book: Book, pageIndex: Int, pageCount: Int, pageOffsetY: Double = 0) {
-        let state = BookProgressState
+        let state =
+            BookProgressState
             .pdf(bookID: book.id, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY, lastOpenedAt: .now)
         apply(state: mergedLocalState(for: book.id, with: state), toBookID: book.id)
         schedulePersist(state: state)
@@ -363,13 +370,14 @@ final class LibraryController: ObservableObject {
         defaults.set(bookmark, forKey: trackingBookmarkKey)
 
         if isStale {
-            let refreshed = try resolved.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+            let refreshed = try resolved.bookmarkData(
+                options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
             defaults.set(refreshed, forKey: trackingBookmarkKey)
         }
 
         refresh(silently: false)
     }
-    
+
     private func addLocalLibrary(at url: URL) throws {
         let bookmark = try url.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
 
@@ -387,10 +395,12 @@ final class LibraryController: ObservableObject {
 
         scopedLocalLibraries.append(resolved)
         localLibraries.append(resolved.standardizedFileURL)
-        
-        let bookmarks = scopedLocalLibraries.compactMap { try? $0.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil) }
+
+        let bookmarks = scopedLocalLibraries.compactMap {
+            try? $0.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+        }
         defaults.set(bookmarks, forKey: localLibrariesKey)
-        
+
         refresh(silently: false)
     }
 
@@ -410,7 +420,8 @@ final class LibraryController: ObservableObject {
                     trackingDirectoryURL = resolved.standardizedFileURL
 
                     if isStale {
-                        let refreshed = try resolved.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+                        let refreshed = try resolved.bookmarkData(
+                            options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
                         defaults.set(refreshed, forKey: trackingBookmarkKey)
                     }
                 }
@@ -418,19 +429,21 @@ final class LibraryController: ObservableObject {
                 defaults.removeObject(forKey: trackingBookmarkKey)
             }
         }
-        
+
         if let datas = defaults.array(forKey: localLibrariesKey) as? [Data] {
             var updatedBookmarks: [Data] = []
             for data in datas {
                 do {
                     var isStale = false
-                    let resolved = try URL(resolvingBookmarkData: data, options: bookmarkResolutionOptions, relativeTo: nil, bookmarkDataIsStale: &isStale)
+                    let resolved = try URL(
+                        resolvingBookmarkData: data, options: bookmarkResolutionOptions, relativeTo: nil, bookmarkDataIsStale: &isStale)
                     if resolved.startAccessingSecurityScopedResource() {
                         scopedLocalLibraries.append(resolved)
                         localLibraries.append(resolved.standardizedFileURL)
-                        
+
                         if isStale {
-                            let refreshed = try resolved.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+                            let refreshed = try resolved.bookmarkData(
+                                options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
                             updatedBookmarks.append(refreshed)
                         } else {
                             updatedBookmarks.append(data)
@@ -442,7 +455,7 @@ final class LibraryController: ObservableObject {
             }
             defaults.set(updatedBookmarks, forKey: localLibrariesKey)
         }
-        
+
         if trackingDirectoryURL != nil {
             refresh(silently: false)
         }
@@ -494,36 +507,37 @@ final class LibraryController: ObservableObject {
             return updatedBook
         }
     }
-    
+
     // --- Scanning & Hashing Logic ---
-    
+
     private nonisolated static func cacheDirectory() -> URL {
         let urls = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
         let cacheDir = urls[0].appending(path: "com.anatol.bookreader", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         return cacheDir
     }
-    
+
     private nonisolated static func hashCacheURL() -> URL {
         cacheDirectory().appending(path: "hashes.json")
     }
-    
+
     private nonisolated static func loadHashCache() -> FileHashCache {
         let url = hashCacheURL()
         guard let data = try? Data(contentsOf: url),
-              let cache = try? JSONDecoder().decode(FileHashCache.self, from: data) else {
+            let cache = try? JSONDecoder().decode(FileHashCache.self, from: data)
+        else {
             return FileHashCache()
         }
         return cache
     }
-    
+
     private nonisolated static func saveHashCache(_ cache: FileHashCache) {
         let url = hashCacheURL()
         if let data = try? JSONEncoder().encode(cache) {
             try? data.write(to: url, options: .atomic)
         }
     }
-    
+
     private nonisolated static func calculateHash(fileURL: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: fileURL)
         defer { try? handle.close() }
@@ -538,7 +552,7 @@ final class LibraryController: ObservableObject {
         let fileManager = FileManager.default
         let stateDirectory = trackingDirectoryURL.appending(path: "progress", directoryHint: .isDirectory)
         let trackingBooksDirectory = trackingDirectoryURL.appending(path: "books", directoryHint: .isDirectory)
-        
+
         try fileManager.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: trackingBooksDirectory, withIntermediateDirectories: true)
 
@@ -548,60 +562,66 @@ final class LibraryController: ObservableObject {
 
         // Helper to scan a directory and yield (URL, format, fileSize, modifiedAt, hash)
         func processDirectory(at url: URL) -> [(URL, BookFormat, Int64, Date, String, String)] {
-            guard let contents = try? fileManager.contentsOfDirectory(
-                at: url,
-                includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else { return [] }
-            
+            guard
+                let contents = try? fileManager.contentsOfDirectory(
+                    at: url,
+                    includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                )
+            else { return [] }
+
             var results: [(URL, BookFormat, Int64, Date, String, String)] = []
-            
+
             for fileURL in contents {
                 guard let format = BookFormat(url: fileURL) else { continue }
                 guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]),
-                      values.isRegularFile == true,
-                      let modifiedAt = values.contentModificationDate,
-                      let fileSizeVal = values.fileSize else { continue }
+                    values.isRegularFile == true,
+                    let modifiedAt = values.contentModificationDate,
+                    let fileSizeVal = values.fileSize
+                else { continue }
                 let fileSize = Int64(fileSizeVal)
-                
+
                 let pathKey = fileURL.path()
                 let hash: String
-                
-                if let record = hashCache.records[pathKey], record.fileSize == fileSize, abs(record.modifiedAt.timeIntervalSince(modifiedAt)) < 1.0 {
+
+                if let record = hashCache.records[pathKey], record.fileSize == fileSize,
+                    abs(record.modifiedAt.timeIntervalSince(modifiedAt)) < 1.0
+                {
                     hash = record.contentHash
                 } else {
                     guard let newHash = try? calculateHash(fileURL: fileURL) else { continue }
                     hash = newHash
-                    hashCache.records[pathKey] = FileHashRecord(path: pathKey, fileSize: fileSize, modifiedAt: modifiedAt, contentHash: hash)
+                    hashCache.records[pathKey] = FileHashRecord(
+                        path: pathKey, fileSize: fileSize, modifiedAt: modifiedAt, contentHash: hash)
                     cacheUpdated = true
                 }
-                
+
                 results.append((fileURL, format, fileSize, modifiedAt, hash, fileURL.deletingPathExtension().lastPathComponent))
             }
             return results
         }
-        
+
         // 1. Scan Tracking Directory
         let trackedBooks = processDirectory(at: trackingBooksDirectory)
-        
+
         // 2. Scan Local Libraries
         var localBooks: [(URL, BookFormat, Int64, Date, String, String)] = []
         for lib in localLibraries {
             localBooks.append(contentsOf: processDirectory(at: lib))
         }
-        
+
         if cacheUpdated {
             saveHashCache(hashCache)
         }
-        
+
         var generatedBooks: [Book] = []
         var seenHashes = Set<String>()
-        
+
         // Process tracked books first to ensure they are the authoritative copy if duplicated
         for (fileURL, format, fileSize, modifiedAt, hash, title) in trackedBooks {
             guard !seenHashes.contains(hash) else { continue }
             seenHashes.insert(hash)
-            
+
             let state = progressStates[hash]
             let book = Book(
                 id: hash,
@@ -609,18 +629,18 @@ final class LibraryController: ObservableObject {
                 fileURL: fileURL,
                 format: format,
                 fileSize: fileSize,
-                addedAt: modifiedAt, // Just use modifiedAt as addedAt for tracked copies
+                addedAt: modifiedAt,  // Just use modifiedAt as addedAt for tracked copies
                 modifiedAt: modifiedAt,
                 progressState: state
             )
             generatedBooks.append(book)
         }
-        
+
         // Process local books
         for (fileURL, format, fileSize, modifiedAt, hash, title) in localBooks {
             guard !seenHashes.contains(hash) else { continue }
             seenHashes.insert(hash)
-            
+
             let state = progressStates[hash]
             let book = Book(
                 id: hash,
@@ -705,7 +725,8 @@ final class LibraryController: ObservableObject {
         merged.isFinished = normalizedLocal.isFinished || normalizedRemote.isFinished || merged.progress >= 0.999
 
         if normalizedLocal.epubFontSizePercent != nil && normalizedRemote.epubFontSizePercent != nil {
-            merged.epubFontSizePercent = normalizedLocal.updatedAt >= normalizedRemote.updatedAt
+            merged.epubFontSizePercent =
+                normalizedLocal.updatedAt >= normalizedRemote.updatedAt
                 ? normalizedLocal.epubFontSizePercent
                 : normalizedRemote.epubFontSizePercent
         } else {

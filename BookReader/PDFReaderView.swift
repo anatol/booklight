@@ -220,8 +220,9 @@ struct PDFReaderRepresentable: UIViewRepresentable {
             // Deduplicate: skip if page and offset haven't meaningfully changed.
             let offsetThreshold = 0.005
             if lastSentPageIndex == pageIndex,
-               let lastOffset = lastSentOffsetY,
-               abs(lastOffset - offsetY) < offsetThreshold {
+                let lastOffset = lastSentOffsetY,
+                abs(lastOffset - offsetY) < offsetThreshold
+            {
                 return
             }
 

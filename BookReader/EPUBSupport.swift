@@ -173,13 +173,13 @@ enum EPUBCombiner {
 
         // Build the combined HTML document.
         var html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <!DOCTYPE html>
+            <html>
+            <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-        """
+            """
 
         // Include each unique stylesheet once at the top.
         for path in stylesheetPaths {
@@ -187,18 +187,18 @@ enum EPUBCombiner {
         }
 
         html += """
-        <style>
-        /* Divider between chapters for visual separation */
-        .epub-chapter-divider {
-            height: 1px;
-            background: rgba(128, 128, 128, 0.3);
-            margin: 3em 0;
-        }
-        </style>
-        </head>
-        <body>
+            <style>
+            /* Divider between chapters for visual separation */
+            .epub-chapter-divider {
+                height: 1px;
+                background: rgba(128, 128, 128, 0.3);
+                margin: 3em 0;
+            }
+            </style>
+            </head>
+            <body>
 
-        """
+            """
 
         for (offset, chapter) in chapterBodies.enumerated() {
             if offset > 0 {
@@ -210,9 +210,9 @@ enum EPUBCombiner {
         }
 
         html += """
-        </body>
-        </html>
-        """
+            </body>
+            </html>
+            """
 
         try html.write(to: combinedURL, atomically: true, encoding: .utf8)
         return combinedURL
@@ -287,9 +287,10 @@ enum EPUBCombiner {
         let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
         for match in matches.reversed() {
             guard match.numberOfRanges == 4,
-                  let prefixRange = Range(match.range(at: 1), in: result),
-                  let valueRange = Range(match.range(at: 2), in: result),
-                  let suffixRange = Range(match.range(at: 3), in: result) else {
+                let prefixRange = Range(match.range(at: 1), in: result),
+                let valueRange = Range(match.range(at: 2), in: result),
+                let suffixRange = Range(match.range(at: 3), in: result)
+            else {
                 continue
             }
 
@@ -410,9 +411,11 @@ private enum EPUBArchiveExtractor {
         let centralSignature: UInt32 = 0x02014b50
 
         let lowerBound = max(0, data.count - 65_557)
-        guard let eocdOffset = stride(from: data.count - 22, through: lowerBound, by: -1).first(where: {
-            data.uint32LE(at: $0) == eocdSignature
-        }) else {
+        guard
+            let eocdOffset = stride(from: data.count - 22, through: lowerBound, by: -1).first(where: {
+                data.uint32LE(at: $0) == eocdSignature
+            })
+        else {
             throw EPUBError.invalidArchive
         }
 
@@ -423,7 +426,7 @@ private enum EPUBArchiveExtractor {
         var entries: [Entry] = []
         entries.reserveCapacity(entryCount)
 
-        for _ in 0..<entryCount {
+        for _ in 0 ..< entryCount {
             guard data.uint32LE(at: cursor) == centralSignature else {
                 throw EPUBError.invalidArchive
             }
@@ -437,10 +440,8 @@ private enum EPUBArchiveExtractor {
             let localHeaderOffset = Int(data.uint32LE(at: cursor + 42))
 
             let fileNameOffset = cursor + 46
-            let fileNameData = data.subdata(in: fileNameOffset..<(fileNameOffset + fileNameLength))
-            let fileName = String(data: fileNameData, encoding: .utf8) ??
-                String(data: fileNameData, encoding: .isoLatin1) ??
-                ""
+            let fileNameData = data.subdata(in: fileNameOffset ..< (fileNameOffset + fileNameLength))
+            let fileName = String(data: fileNameData, encoding: .utf8) ?? String(data: fileNameData, encoding: .isoLatin1) ?? ""
 
             entries.append(
                 Entry(
@@ -468,7 +469,7 @@ private enum EPUBArchiveExtractor {
         let fileNameLength = Int(archiveData.uint16LE(at: localHeaderOffset + 26))
         let extraFieldLength = Int(archiveData.uint16LE(at: localHeaderOffset + 28))
         let payloadOffset = localHeaderOffset + 30 + fileNameLength + extraFieldLength
-        let payloadRange = payloadOffset..<(payloadOffset + entry.compressedSize)
+        let payloadRange = payloadOffset ..< (payloadOffset + entry.compressedSize)
         let payload = archiveData.subdata(in: payloadRange)
 
         switch entry.compressionMethod {
@@ -554,7 +555,10 @@ private struct ContainerDocument {
 private final class MutableContainerParser: NSObject, XMLParserDelegate {
     var rootFilePath: String?
 
-    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+    func parser(
+        _ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?,
+        attributes attributeDict: [String: String] = [:]
+    ) {
         if elementName.lowercased().hasSuffix("rootfile") {
             rootFilePath = attributeDict["full-path"]
         }
@@ -606,7 +610,10 @@ private final class MutablePackageParser: NSObject, XMLParserDelegate {
 
     private var isInsideTitle = false
 
-    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+    func parser(
+        _ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?,
+        attributes attributeDict: [String: String] = [:]
+    ) {
         let lowered = elementName.lowercased()
 
         if lowered.hasSuffix("title") {
@@ -641,10 +648,7 @@ private extension Data {
     }
 
     func uint32LE(at offset: Int) -> UInt32 {
-        UInt32(self[offset]) |
-        (UInt32(self[offset + 1]) << 8) |
-        (UInt32(self[offset + 2]) << 16) |
-        (UInt32(self[offset + 3]) << 24)
+        UInt32(self[offset]) | (UInt32(self[offset + 1]) << 8) | (UInt32(self[offset + 2]) << 16) | (UInt32(self[offset + 3]) << 24)
     }
 }
 

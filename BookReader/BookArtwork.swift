@@ -69,7 +69,7 @@ struct BookThumbnailView: View {
             }
             return
         }
-        
+
         let nsCacheKey = bookID as NSString
 
         if let cached = await MainActor.run(body: {
@@ -80,11 +80,11 @@ struct BookThumbnailView: View {
             }
             return
         }
-        
+
         let urls = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
         let thumbnailsDir = urls[0].appending(path: "com.anatol.bookreader/thumbnails", directoryHint: .isDirectory)
         let diskURL = thumbnailsDir.appending(path: "\(bookID).png")
-        
+
         if let data = try? Data(contentsOf: diskURL), let uiImage = UIImage(data: data) {
             await MainActor.run {
                 BookThumbnailCache.cache.setObject(uiImage, forKey: nsCacheKey)
@@ -172,36 +172,36 @@ private struct SVGResourceView: UIViewRepresentable {
         }
 
         let html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-        <style>
-        html, body {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            background: transparent;
-        }
-        body {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        svg {
-            width: 100%;
-            height: 100%;
-            display: block;
-        }
-        </style>
-        </head>
-        <body>
-        \(svg)
-        </body>
-        </html>
-        """
+            <!DOCTYPE html>
+            <html>
+            <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+            <style>
+            html, body {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+                background: transparent;
+            }
+            body {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            svg {
+                width: 100%;
+                height: 100%;
+                display: block;
+            }
+            </style>
+            </head>
+            <body>
+            \(svg)
+            </body>
+            </html>
+            """
 
         webView.loadHTMLString(html, baseURL: resourceURL.deletingLastPathComponent())
     }

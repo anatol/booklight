@@ -30,7 +30,9 @@ struct ReaderContainerView: View {
                         EPUBBookView(book: book, bookURL: bookURL, controller: controller)
                     }
                 } else {
-                    ContentUnavailableView("Book Missing", systemImage: "exclamationmark.triangle", description: Text("This book is no longer present in the library."))
+                    ContentUnavailableView(
+                        "Book Missing", systemImage: "exclamationmark.triangle",
+                        description: Text("This book is no longer present in the library."))
                 }
             }
 
@@ -85,8 +87,8 @@ struct ReaderContainerView: View {
     /// SwiftUI's .navigationTitle on a pushed view does not update the title bar.
     private func setSceneTitle(_ title: String) {
         #if targetEnvironment(macCatalyst)
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
-        scene.title = title
+            guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+            scene.title = title
         #endif
     }
 }

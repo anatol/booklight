@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "indentation": {
+    "spaces": 4
+  },
+  "tabWidth": 4,
+  "lineLength": 140,
+  "maximumBlankLines": 1,
+  "respectsExistingLineBreaks": true,
+  "lineBreakBeforeControlFlowKeywords": false,
+  "lineBreakBeforeEachArgument": false,
+  "lineBreakBeforeEachGenericRequirement": false,
+  "prioritizeKeepingFunctionOutputTogether": true,
+  "indentConditionalCompilationBlocks": true,
+  "spacesAroundRangeFormationOperators": true,
+  "rules": {
+    "DoNotUseSemicolons": true,
+    "NoParensAroundConditions": true,
+    "NoEmptyTrailingClosureParentheses": true,
+    "UseLetInEveryBoundCaseVariable": true,
+    "UseTripleSlashForDocumentationComments": true,
+    "ReturnVoidInsteadOfEmptyTuple": true,
+    "NoCasesWithOnlyFallthrough": true,
+    "OneCasePerLine": true
+  }
+}

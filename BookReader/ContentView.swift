@@ -57,11 +57,11 @@ struct ContentView: View {
             allowsMultipleSelection: false
         ) { result in
             switch result {
-            case let .success(urls):
+            case .success(let urls):
                 if let firstURL = urls.first {
                     controller.handlePickedTrackingDirectory(.success(firstURL))
                 }
-            case let .failure(error):
+            case .failure(let error):
                 controller.handlePickedTrackingDirectory(.failure(error))
             }
         }
@@ -199,8 +199,8 @@ private struct BookGallerySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-//            Text(title)
-//                .font(.title3.weight(.semibold))
+            //            Text(title)
+            //                .font(.title3.weight(.semibold))
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
                 ForEach(books) { book in
@@ -324,9 +324,9 @@ struct SettingsView: View {
                             Text("Not Selected")
                                 .foregroundColor(.secondary)
                         }
-                        
+
                         Spacer()
-                        
+
                         Button("Change...") {
                             isPickingTrackingDirectory = true
                         }
@@ -338,15 +338,15 @@ struct SettingsView: View {
                     allowsMultipleSelection: false
                 ) { result in
                     switch result {
-                    case let .success(urls):
+                    case .success(let urls):
                         if let firstURL = urls.first {
                             controller.handlePickedTrackingDirectory(.success(firstURL))
                         }
-                    case let .failure(error):
+                    case .failure(let error):
                         controller.handlePickedTrackingDirectory(.failure(error))
                     }
                 }
-                
+
                 Section(
                     header: Text("Local Libraries"),
                     footer: Text("These folders are scanned for books, but their contents are never modified by the app.")
@@ -363,7 +363,7 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    
+
                     Button {
                         isPickingLocalLibrary = true
                     } label: {
@@ -376,11 +376,11 @@ struct SettingsView: View {
                     allowsMultipleSelection: false
                 ) { result in
                     switch result {
-                    case let .success(urls):
+                    case .success(let urls):
                         if let firstURL = urls.first {
                             controller.handlePickedLocalLibrary(.success(firstURL))
                         }
-                    case let .failure(error):
+                    case .failure(let error):
                         controller.handlePickedLocalLibrary(.failure(error))
                     }
                 }
@@ -397,4 +397,3 @@ struct SettingsView: View {
         }
     }
 }
-

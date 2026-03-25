@@ -102,7 +102,7 @@ struct FileHashRecord: Codable, Hashable, Sendable {
 
 struct FileHashCache: Codable, Sendable {
     var version: Int = 1
-    var records: [String: FileHashRecord] = [:] // url.path -> record
+    var records: [String: FileHashRecord] = [:]  // url.path -> record
 }
 
 extension BookProgressState {

@@ -16,6 +16,7 @@
 		AA0000000000000000000007 /* EPUBSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000017 /* EPUBSupport.swift */; };
 		AA0000000000000000000008 /* EPUBReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000018 /* EPUBReaderView.swift */; };
 		AA0000000000000000000009 /* BookArtwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000019 /* BookArtwork.swift */; };
+		AA000000000000000000000A /* ReaderSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001A /* ReaderSearch.swift */; };
 		AA000000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001B /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -40,6 +41,7 @@
 		AA0000000000000000000017 /* EPUBSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBSupport.swift; sourceTree = "<group>"; };
 		AA0000000000000000000018 /* EPUBReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBReaderView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000019 /* BookArtwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookArtwork.swift; sourceTree = "<group>"; };
+		AA000000000000000000001A /* ReaderSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderSearch.swift; sourceTree = "<group>"; };
 		AA000000000000000000001B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		DE636BCD2F742D48002BED53 /* BooklightTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BooklightTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -87,6 +89,7 @@
 				AA0000000000000000000017 /* EPUBSupport.swift */,
 				AA0000000000000000000018 /* EPUBReaderView.swift */,
 				AA0000000000000000000019 /* BookArtwork.swift */,
+				AA000000000000000000001A /* ReaderSearch.swift */,
 				AA000000000000000000001B /* Assets.xcassets */,
 			);
 			path = Booklight;
@@ -214,6 +217,7 @@
 				AA0000000000000000000007 /* EPUBSupport.swift in Sources */,
 				AA0000000000000000000008 /* EPUBReaderView.swift in Sources */,
 				AA0000000000000000000009 /* BookArtwork.swift in Sources */,
+				AA000000000000000000000A /* ReaderSearch.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -4,6 +4,7 @@ import WebKit
 /// Proxy object that bridges SwiftUI key events to the underlying WKWebView,
 /// allowing Space / Shift+Space to scroll by one viewport height and
 /// Shift+"+"/"-" to adjust font size.
+/// Also manages in-document text search via injected JavaScript.
 @MainActor
 final class EPUBScrollProxy: ObservableObject {
     weak var webView: WKWebView?
@@ -11,9 +12,107 @@ final class EPUBScrollProxy: ObservableObject {
     /// Current font size as a percentage of the default (100%). Range: 50–200%.
     @Published var fontSizePercent: Int = 100
 
+    // MARK: - Search state
+
+    /// Number of matches found for the current search query.
+    @Published var searchMatchCount: Int = 0
+    /// Zero-based index of the currently highlighted match.
+    @Published var searchCurrentIndex: Int = 0
+    /// The text that was last searched, used to detect whether a new search
+    /// is needed or we can just navigate between existing results.
+    var lastSearchText: String = ""
+
     private static let minFontSize = 50
     private static let maxFontSize = 200
     private static let fontSizeStep = 10
+
+    // MARK: - Position save/restore (for returning to pre-search position)
+
+    /// Saved chapter-based progress from before the search was opened,
+    /// captured via `computeCenterProgress()` so we can restore on dismiss.
+    private var savedProgressJSON: String?
+
+    /// Saves the current scroll position so it can be restored later.
+    /// Uses the chapter-based progress (robust across font size changes).
+    func savePosition() {
+        webView?.evaluateJavaScript("JSON.stringify(window.computeCenterProgress())") { [weak self] result, _ in
+            Task { @MainActor [weak self] in
+                self?.savedProgressJSON = result as? String
+            }
+        }
+    }
+
+    /// Restores the scroll position saved by `savePosition()`,
+    /// returning the user to where they were before searching.
+    func restorePosition() {
+        guard let json = savedProgressJSON else { return }
+        webView?.evaluateJavaScript("window.restoreCenterProgress(\(json));")
+        savedProgressJSON = nil
+    }
+
+    // MARK: - Search
+
+    /// Performs a case-insensitive search in the EPUB content using injected JavaScript.
+    /// Highlights all matches with yellow and the current match with orange.
+    func search(for text: String) {
+        guard let webView else {
+            searchMatchCount = 0
+            searchCurrentIndex = 0
+            return
+        }
+
+        lastSearchText = text
+
+        // Escape single quotes and backslashes for safe JS string interpolation.
+        let escaped = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+
+        let js = "window._bookSearch.search('\(escaped)');"
+        webView.evaluateJavaScript(js) { [weak self] result, _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let dict = result as? [String: Any],
+                   let count = dict["count"] as? Int {
+                    self.searchMatchCount = count
+                    self.searchCurrentIndex = count > 0 ? 0 : 0
+                } else {
+                    self.searchMatchCount = 0
+                    self.searchCurrentIndex = 0
+                }
+            }
+        }
+    }
+
+    /// Navigates to the next search match, wrapping around at the end.
+    func nextSearchMatch() {
+        guard searchMatchCount > 0 else { return }
+        let nextIndex = (searchCurrentIndex + 1) % searchMatchCount
+        goToMatch(nextIndex)
+    }
+
+    /// Navigates to the previous search match, wrapping around at the start.
+    func previousSearchMatch() {
+        guard searchMatchCount > 0 else { return }
+        let prevIndex = (searchCurrentIndex - 1 + searchMatchCount) % searchMatchCount
+        goToMatch(prevIndex)
+    }
+
+    /// Clears all search highlights from the DOM and resets search state.
+    /// Does NOT clear `lastSearchText` so it persists for the next search open.
+    func clearSearch() {
+        searchMatchCount = 0
+        searchCurrentIndex = 0
+        webView?.evaluateJavaScript("window._bookSearch.clear();")
+    }
+
+    /// Scrolls to and highlights the match at the given index.
+    private func goToMatch(_ index: Int) {
+        searchCurrentIndex = index
+        webView?.evaluateJavaScript("window._bookSearch.goTo(\(index));")
+    }
+
+    // MARK: - Scrolling
 
     /// Scroll the EPUB content down by ~90% of the viewport (slight overlap for context).
     func scrollPageDown() {
@@ -24,6 +123,8 @@ final class EPUBScrollProxy: ObservableObject {
     func scrollPageUp() {
         webView?.evaluateJavaScript("window.scrollBy(0, -window.innerHeight * 0.9)")
     }
+
+    // MARK: - Font size
 
     /// Increase font size by one step (10%), capped at 200%.
     func increaseFontSize() {
@@ -84,37 +185,82 @@ struct EPUBBookView: View {
     @State private var initialScrollTarget: EPUBScrollTarget?
     @StateObject private var scrollProxy = EPUBScrollProxy()
 
-    var body: some View {
-        Group {
-            if let document {
-                EPUBWebView(
-                    document: document,
-                    initialScrollTarget: initialScrollTarget,
-                    scrollProxy: scrollProxy,
-                    initialFontSizePercent: scrollProxy.fontSizePercent
-                ) { chapterIndex, chapterProgress, overallProgress in
-                    // Clamp values to valid ranges before persisting.
-                    let clampedIndex = min(max(chapterIndex, 0), max(document.spine.count - 1, 0))
-                    let clampedChapterProgress = chapterProgress.clampedToUnit
-                    let clampedOverall = overallProgress.clampedToUnit
+    @State private var showSearch = false
+    @State private var searchText = ""
 
-                    controller.saveEPUBPosition(
-                        for: book,
-                        chapterIndex: clampedIndex,
-                        chapterPath: document.spine[clampedIndex].href,
-                        chapterProgress: clampedChapterProgress,
-                        overallProgress: clampedOverall
-                    )
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let document {
+                    EPUBWebView(
+                        document: document,
+                        initialScrollTarget: initialScrollTarget,
+                        scrollProxy: scrollProxy,
+                        initialFontSizePercent: scrollProxy.fontSizePercent
+                    ) { chapterIndex, chapterProgress, overallProgress in
+                        // Clamp values to valid ranges before persisting.
+                        let clampedIndex = min(max(chapterIndex, 0), max(document.spine.count - 1, 0))
+                        let clampedChapterProgress = chapterProgress.clampedToUnit
+                        let clampedOverall = overallProgress.clampedToUnit
+
+                        controller.saveEPUBPosition(
+                            for: book,
+                            chapterIndex: clampedIndex,
+                            chapterPath: document.spine[clampedIndex].href,
+                            chapterProgress: clampedChapterProgress,
+                            overallProgress: clampedOverall
+                        )
+                    }
+                } else if isPreparing {
+                    ProgressView("Opening EPUB…")
+                } else {
+                    ContentUnavailableView(
+                        "Could Not Open EPUB", systemImage: "exclamationmark.triangle", description: Text(loadError ?? "Unknown error"))
                 }
-            } else if isPreparing {
-                ProgressView("Opening EPUB…")
-            } else {
-                ContentUnavailableView(
-                    "Could Not Open EPUB", systemImage: "exclamationmark.triangle", description: Text(loadError ?? "Unknown error"))
             }
+
+            if showSearch {
+                ReaderSearchBar(
+                    searchText: $searchText,
+                    matchCount: scrollProxy.searchMatchCount,
+                    currentMatchIndex: scrollProxy.searchCurrentIndex,
+                    hasActiveSearch: !scrollProxy.lastSearchText.isEmpty
+                        && scrollProxy.lastSearchText == searchText,
+                    onSearchOrNext: { handleSearchOrNext() },
+                    onNext: { scrollProxy.nextSearchMatch() },
+                    onPrevious: { scrollProxy.previousSearchMatch() },
+                    onDismiss: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            dismissSearch()
+                        }
+                    }
+                )
+                .padding(.top, 8)
+                .padding(.trailing, 16)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            // Cmd+F toggle button — invisible, uses .keyboardShortcut so it
+            // works regardless of which view currently has focus (unlike
+            // .onKeyPress which breaks on Mac Catalyst after dismiss).
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if showSearch {
+                        dismissSearch()
+                    } else {
+                        openSearch()
+                    }
+                }
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .hidden()
         }
         .focusable()
         .onKeyPress(.space, phases: .down) { keyPress in
+            // Don't intercept Space when search bar is active (user is typing).
+            guard !showSearch else { return .ignored }
             // Space scrolls down, Shift+Space scrolls up (like macOS Preview).
             if keyPress.modifiers.contains(.shift) {
                 scrollProxy.scrollPageUp()
@@ -144,6 +290,35 @@ struct EPUBBookView: View {
             controller.markOpened(book)
             await loadDocument()
         }
+    }
+
+    private func openSearch() {
+        // Save position before searching so we can restore on dismiss.
+        scrollProxy.savePosition()
+        // Pre-fill with the last searched text (stays empty if no prior search).
+        searchText = scrollProxy.lastSearchText
+        showSearch = true
+    }
+
+    /// Enter in the search bar: perform a new search if the text changed,
+    /// or navigate to the next match if the same text is already searched.
+    private func handleSearchOrNext() {
+        guard !searchText.isEmpty else { return }
+        if searchText == scrollProxy.lastSearchText && scrollProxy.searchMatchCount > 0 {
+            scrollProxy.nextSearchMatch()
+        } else {
+            scrollProxy.search(for: searchText)
+        }
+    }
+
+    private func dismissSearch() {
+        showSearch = false
+        // Restore the reading position from before search was opened.
+        scrollProxy.clearSearch()
+        scrollProxy.restorePosition()
+        // Keep searchText on the proxy's lastSearchText for next open,
+        // but clear the local binding.
+        searchText = ""
     }
 
     private func loadDocument() async {
@@ -219,6 +394,14 @@ private struct EPUBWebView: UIViewRepresentable {
         let configuration = WKWebViewConfiguration()
         let contentController = WKUserContentController()
         contentController.add(context.coordinator, name: "readerProgress")
+        // Inject search functionality (must run before scroll tracking so it's
+        // available when the page loads, but after the DOM is ready).
+        contentController.addUserScript(
+            WKUserScript(
+                source: Self.searchScript,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true
+            ))
         contentController.addUserScript(
             WKUserScript(
                 source: Self.scrollTrackingScript,
@@ -243,6 +426,115 @@ private struct EPUBWebView: UIViewRepresentable {
         scrollProxy.webView = webView
         context.coordinator.loadCombinedDocument(scrollTarget: initialScrollTarget)
     }
+
+    // MARK: - JavaScript for in-document text search
+
+    /// Provides search-and-highlight functionality using DOM TreeWalker.
+    /// Wraps each match in a <mark> element with CSS classes for styling.
+    /// The current match gets an additional "current" class with an orange background.
+    static let searchScript = """
+        (function() {
+            // Inject search highlight CSS.
+            var style = document.createElement('style');
+            style.textContent = `
+                mark.search-hl { background-color: rgba(255, 255, 0, 0.5); color: inherit; padding: 0; border-radius: 2px; }
+                mark.search-hl.current { background-color: rgba(255, 149, 0, 0.7); color: inherit; }
+            `;
+            document.head.appendChild(style);
+
+            window._bookSearch = {
+                _matches: [],
+                _currentIndex: -1,
+
+                // Remove all <mark class="search-hl"> elements, restoring original text nodes.
+                clear: function() {
+                    document.querySelectorAll('mark.search-hl').forEach(function(mark) {
+                        var parent = mark.parentNode;
+                        parent.replaceChild(document.createTextNode(mark.textContent), mark);
+                        // Merge adjacent text nodes back together.
+                        parent.normalize();
+                    });
+                    this._matches = [];
+                    this._currentIndex = -1;
+                    return { count: 0 };
+                },
+
+                // Search all text nodes for the query (case-insensitive).
+                // Returns { count: N } with the number of matches found.
+                search: function(query) {
+                    this.clear();
+                    if (!query) return { count: 0 };
+
+                    var lowerQuery = query.toLowerCase();
+                    var matches = [];
+
+                    // Collect all text nodes that contain the query.
+                    var walker = document.createTreeWalker(
+                        document.body, NodeFilter.SHOW_TEXT, null, false
+                    );
+                    var textNodes = [];
+                    while (walker.nextNode()) {
+                        if (walker.currentNode.nodeValue.toLowerCase().indexOf(lowerQuery) !== -1) {
+                            textNodes.push(walker.currentNode);
+                        }
+                    }
+
+                    // Wrap each occurrence in a <mark> element.
+                    for (var t = 0; t < textNodes.length; t++) {
+                        var node = textNodes[t];
+                        var text = node.nodeValue;
+                        var lower = text.toLowerCase();
+                        var fragment = document.createDocumentFragment();
+                        var lastIndex = 0;
+                        var idx;
+
+                        while ((idx = lower.indexOf(lowerQuery, lastIndex)) !== -1) {
+                            // Text before the match.
+                            if (idx > lastIndex) {
+                                fragment.appendChild(document.createTextNode(text.substring(lastIndex, idx)));
+                            }
+                            // The match itself, wrapped in <mark>.
+                            var mark = document.createElement('mark');
+                            mark.className = 'search-hl';
+                            mark.textContent = text.substring(idx, idx + query.length);
+                            fragment.appendChild(mark);
+                            matches.push(mark);
+                            lastIndex = idx + query.length;
+                        }
+
+                        // Remaining text after the last match.
+                        if (lastIndex < text.length) {
+                            fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
+                        }
+
+                        node.parentNode.replaceChild(fragment, node);
+                    }
+
+                    this._matches = matches;
+                    // Automatically navigate to the first match.
+                    if (matches.length > 0) {
+                        this.goTo(0);
+                    }
+                    return { count: matches.length };
+                },
+
+                // Navigate to the match at the given index and scroll it into view.
+                goTo: function(index) {
+                    if (!this._matches.length || index < 0 || index >= this._matches.length) return;
+
+                    // Remove "current" class from the previous match.
+                    if (this._currentIndex >= 0 && this._currentIndex < this._matches.length) {
+                        this._matches[this._currentIndex].classList.remove('current');
+                    }
+
+                    this._currentIndex = index;
+                    var match = this._matches[index];
+                    match.classList.add('current');
+                    match.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            };
+        })();
+        """
 
     // MARK: - JavaScript for tracking scroll position across combined chapters
 

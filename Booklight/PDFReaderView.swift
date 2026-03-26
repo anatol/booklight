@@ -3,9 +3,132 @@ import SwiftUI
 
 /// Proxy object that bridges SwiftUI key events to the underlying PDFView,
 /// allowing Space / Shift+Space to scroll by one viewport height.
+/// Also manages in-document text search via PDFKit's built-in findString API.
 @MainActor
 final class PDFScrollProxy: ObservableObject {
     weak var pdfView: PDFView?
+
+    // MARK: - Search state
+
+    /// All selections matching the current search query.
+    @Published var searchSelections: [PDFSelection] = []
+    /// Zero-based index of the currently highlighted match.
+    @Published var searchCurrentIndex: Int = 0
+    /// The text that was last searched, used to detect whether a new search
+    /// is needed or we can just navigate between existing results.
+    var lastSearchText: String = ""
+
+    // MARK: - Position save/restore (for returning to pre-search position)
+
+    /// Saved PDF destination from before the search was opened,
+    /// so we can return to the original reading position on dismiss.
+    private var savedDestination: PDFDestination?
+
+    /// Saves the current scroll position so it can be restored later.
+    func savePosition() {
+        savedDestination = pdfView?.currentDestination
+    }
+
+    /// Restores the scroll position saved by `savePosition()`,
+    /// returning the user to where they were before searching.
+    func restorePosition() {
+        guard let dest = savedDestination else { return }
+        pdfView?.go(to: dest)
+        savedDestination = nil
+    }
+
+    // MARK: - Search
+
+    /// Performs a case-insensitive search across the entire PDF document.
+    /// Highlights all matches in yellow and navigates to the first one.
+    func search(for text: String) {
+        guard let pdfView, let document = pdfView.document else {
+            clearSearch()
+            return
+        }
+
+        // Clear previous highlights.
+        pdfView.highlightedSelections = nil
+        pdfView.clearSelection()
+        searchSelections = []
+        searchCurrentIndex = 0
+        lastSearchText = text
+
+        guard !text.isEmpty else { return }
+
+        let results = document.findString(text, withOptions: [.caseInsensitive])
+        searchSelections = results
+
+        if !results.isEmpty {
+            // Show all matches as yellow highlights.
+            pdfView.highlightedSelections = results
+            goToMatch(0)
+        }
+    }
+
+    /// Navigates to the next search match, wrapping around at the end.
+    func nextSearchMatch() {
+        guard !searchSelections.isEmpty else { return }
+        let nextIndex = (searchCurrentIndex + 1) % searchSelections.count
+        goToMatch(nextIndex)
+    }
+
+    /// Navigates to the previous search match, wrapping around at the start.
+    func previousSearchMatch() {
+        guard !searchSelections.isEmpty else { return }
+        let prevIndex = (searchCurrentIndex - 1 + searchSelections.count) % searchSelections.count
+        goToMatch(prevIndex)
+    }
+
+    /// Clears all search highlights and resets search state.
+    /// Does NOT clear `lastSearchText` so it persists for the next search open.
+    func clearSearch() {
+        pdfView?.highlightedSelections = nil
+        pdfView?.clearSelection()
+        searchSelections = []
+        searchCurrentIndex = 0
+    }
+
+    /// Scrolls to and highlights the match at the given index.
+    /// The current match is shown as the active selection (blue),
+    /// while all other matches remain as yellow highlights.
+    /// The match is centered vertically in the viewport.
+    private func goToMatch(_ index: Int) {
+        guard index >= 0, index < searchSelections.count,
+              let pdfView else { return }
+        searchCurrentIndex = index
+        let selection = searchSelections[index]
+        pdfView.setCurrentSelection(selection, animate: true)
+
+        // Convert the selection to a PDFDestination so we get predictable
+        // scroll positioning. go(to: PDFSelection) has inconsistent behavior
+        // across matches — sometimes it just ensures visibility rather than
+        // scrolling to a fixed edge. go(to: PDFDestination) always places the
+        // destination point at the top edge of the viewport.
+        if let page = selection.pages.first {
+            let bounds = selection.bounds(for: page)
+            // PDFDestination uses PDF coordinates (origin at bottom-left, Y up).
+            // bounds.origin.y is the bottom of the selection rect, so add height
+            // to get the top of the selection in PDF coords.
+            let topOfSelection = CGPoint(x: bounds.origin.x,
+                                         y: bounds.origin.y + bounds.height)
+            let destination = PDFDestination(page: page, at: topOfSelection)
+            pdfView.go(to: destination)
+        }
+
+        // Now the selection is at the top edge of the viewport.
+        // Scroll back by half the viewport height to center it vertically.
+        if let scrollView = findScrollView() {
+            let halfHeight = scrollView.bounds.height / 2.0
+            let newY = max(scrollView.contentOffset.y - halfHeight, 0)
+            scrollView.setContentOffset(
+                CGPoint(x: scrollView.contentOffset.x, y: newY),
+                animated: false
+            )
+        }
+    }
+
+    // MARK: - Scrolling
 
     /// Scroll the PDF down by one viewport height (with slight overlap).
     func scrollPageDown() {
@@ -42,17 +165,63 @@ struct PDFBookView: View {
     @ObservedObject var controller: LibraryController
     @StateObject private var scrollProxy = PDFScrollProxy()
 
+    @State private var showSearch = false
+    @State private var searchText = ""
+
     var body: some View {
-        PDFReaderRepresentable(
-            documentURL: bookURL,
-            initialPageIndex: book.progressState?.pdfPageIndex ?? 0,
-            initialPageOffsetY: book.progressState?.pdfPageOffsetY ?? 0,
-            scrollProxy: scrollProxy
-        ) { pageIndex, pageCount, pageOffsetY in
-            controller.savePDFPosition(for: book, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY)
+        ZStack(alignment: .topTrailing) {
+            PDFReaderRepresentable(
+                documentURL: bookURL,
+                initialPageIndex: book.progressState?.pdfPageIndex ?? 0,
+                initialPageOffsetY: book.progressState?.pdfPageOffsetY ?? 0,
+                scrollProxy: scrollProxy
+            ) { pageIndex, pageCount, pageOffsetY in
+                controller.savePDFPosition(for: book, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY)
+            }
+
+            if showSearch {
+                ReaderSearchBar(
+                    searchText: $searchText,
+                    matchCount: scrollProxy.searchSelections.count,
+                    currentMatchIndex: scrollProxy.searchCurrentIndex,
+                    hasActiveSearch: !scrollProxy.lastSearchText.isEmpty
+                        && scrollProxy.lastSearchText == searchText,
+                    onSearchOrNext: { handleSearchOrNext() },
+                    onNext: { scrollProxy.nextSearchMatch() },
+                    onPrevious: { scrollProxy.previousSearchMatch() },
+                    onDismiss: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            dismissSearch()
+                        }
+                    }
+                )
+                .padding(.top, 8)
+                .padding(.trailing, 16)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            // Cmd+F toggle button — invisible, uses .keyboardShortcut so it
+            // works regardless of which view currently has focus (unlike
+            // .onKeyPress which requires the view to be focused, and breaks
+            // on Mac Catalyst after the search bar is dismissed).
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if showSearch {
+                        dismissSearch()
+                    } else {
+                        openSearch()
+                    }
+                }
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .hidden()
         }
         .focusable()
         .onKeyPress(.space, phases: .down) { keyPress in
+            // Don't intercept Space when search bar is active (user is typing).
+            guard !showSearch else { return .ignored }
             // Space scrolls down, Shift+Space scrolls up (like macOS Preview).
             if keyPress.modifiers.contains(.shift) {
                 scrollProxy.scrollPageUp()
@@ -66,6 +235,35 @@ struct PDFBookView: View {
             controller.markOpened(book)
         }
         .background(Color(uiColor: .secondarySystemBackground))
+    }
+
+    private func openSearch() {
+        // Save position before searching so we can restore on dismiss.
+        scrollProxy.savePosition()
+        // Pre-fill with the last searched text (stays empty if no prior search).
+        searchText = scrollProxy.lastSearchText
+        showSearch = true
+    }
+
+    /// Enter in the search bar: perform a new search if the text changed,
+    /// or navigate to the next match if the same text is already searched.
+    private func handleSearchOrNext() {
+        guard !searchText.isEmpty else { return }
+        if searchText == scrollProxy.lastSearchText && !scrollProxy.searchSelections.isEmpty {
+            scrollProxy.nextSearchMatch()
+        } else {
+            scrollProxy.search(for: searchText)
+        }
+    }
+
+    private func dismissSearch() {
+        showSearch = false
+        // Restore the reading position from before search was opened.
+        scrollProxy.clearSearch()
+        scrollProxy.restorePosition()
+        // Keep searchText on the proxy's lastSearchText for next open,
+        // but clear the local binding.
+        searchText = ""
     }
 }
 

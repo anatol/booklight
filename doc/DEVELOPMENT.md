@@ -80,6 +80,7 @@ Booklight is a single-target SwiftUI app (~2,200 lines of Swift) that runs on iP
 | `EPUBSupport.swift` | EPUB ZIP extraction and package parsing |
 | `BookArtwork.swift` | Book cover/artwork extraction and caching |
 | `ReaderContainerView.swift` | Container view wrapping the format-specific readers |
+| `ReaderSearch.swift` | Shared search bar UI used by both PDF and EPUB readers |
 | `BooklightApp.swift` | App entry point |
 
 ### Data Persistence
@@ -114,6 +115,7 @@ Booklight/
   EPUBReaderView.swift
   EPUBSupport.swift
   BookArtwork.swift
+  ReaderSearch.swift
   Assets.xcassets/
 doc/
   DEVELOPMENT.md
@@ -195,7 +197,21 @@ Expected: active books are ordered by most recently opened. Unread or finished b
 
 Expected: matching titles remain visible, non-matching titles are filtered, clearing restores the full list.
 
-#### 7. Cross-Device Sync
+#### 7. In-Document Search (PDF and EPUB)
+
+1. Open a PDF or EPUB and note the current reading position.
+2. Press **Cmd+F** — the search bar should appear at the top-right.
+3. Type a word and press **Enter** — matches should highlight and the view should jump to the first match.
+4. Press **Enter** again or click the down arrow — should navigate to the next match (wraps around).
+5. Click the up arrow — should navigate to the previous match.
+6. Press **Escape** or click the X button — the search bar should close and the view should return to the original reading position (from step 1).
+7. Press **Cmd+F** again — the previous search term should appear pre-selected in the search bar.
+8. Start typing a new word — it should replace the previous term.
+9. Press left/right arrow key instead — should deselect and allow editing the previous term.
+
+Expected: search highlights are visible (yellow for all matches, blue/orange for the current match). Match count is displayed as "X of Y". Position is restored on dismiss. Search term persists per-book within the session.
+
+#### 8. Cross-Device Sync
 
 1. Put the same library folder under Syncthing on two devices.
 2. Open the same book on device A and advance further.
@@ -283,7 +299,7 @@ brew install anatol/tap/booklight   # or: brew upgrade booklight
 
 - No automated tests — validation is compile-time and manual only
 - EPUB rendering is intentionally minimal (local ZIP extraction + WKWebView)
-- Search is fuzzy title matching only, not full-text
+- In-document search finds matches within single text nodes only (cross-element matches like `<b>hel</b>lo` are not detected)
 - The app assumes a flat library directory (no nested subfolders)
 - Book identity is filename-based — renaming a file looks like a new book
 

@@ -13,10 +13,21 @@ struct ReaderContainerView: View {
         controller.books.first(where: { $0.id == bookID })
     }
 
-    /// The book filename without extension, used as the window title in reader mode.
-    private var windowTitle: String {
+    /// The book filename without extension, used as the base window title in reader mode.
+    private var bookName: String {
         guard let book else { return "" }
         return book.fileURL.deletingPathExtension().lastPathComponent
+    }
+
+    /// Window title including reading progress, e.g. "MyBook  |  42%".
+    private var windowTitle: String {
+        let name = bookName
+        guard !name.isEmpty else { return "" }
+        if let progress = controller.openBookProgress {
+            let percent = Int(round(progress * 100))
+            return "\(name)  |  \(percent)%"
+        }
+        return name
     }
 
     var body: some View {
@@ -72,14 +83,23 @@ struct ReaderContainerView: View {
         .navigationTitle(windowTitle)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            // Set initial progress from saved state so the title shows it immediately.
+            controller.openBookProgress = book?.progress
             controller.openBookTitle = windowTitle
             setSceneTitle(windowTitle)
         }
         .onDisappear {
             controller.openBookTitle = nil
+            controller.openBookProgress = nil
             // Restore the library title when leaving the reader.
             let libraryTitle = ContentView.windowTitle(for: controller.trackingDirectoryURL)
             setSceneTitle(libraryTitle)
+        }
+        // Update the Mac Catalyst window title whenever progress changes.
+        .onChange(of: controller.openBookProgress) {
+            let title = windowTitle
+            controller.openBookTitle = title
+            setSceneTitle(title)
         }
     }
 

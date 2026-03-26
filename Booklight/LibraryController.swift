@@ -18,6 +18,9 @@ final class LibraryController: ObservableObject {
 
     /// Set by ReaderContainerView when a book is open; used by ContentView to update the window title.
     @Published var openBookTitle: String?
+    /// Current reading progress (0.0–1.0) of the open book, displayed in the window title.
+    /// Not updated during search navigation so the title reflects the actual reading position.
+    @Published var openBookProgress: Double?
 
     private let trackingBookmarkKey = "Booklight.trackingDirectoryBookmark"
     private let localLibrariesKey = "Booklight.localLibrariesBookmarks"

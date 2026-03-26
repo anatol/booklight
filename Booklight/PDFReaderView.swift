@@ -177,6 +177,14 @@ struct PDFBookView: View {
                 scrollProxy: scrollProxy
             ) { pageIndex, pageCount, pageOffsetY in
                 controller.savePDFPosition(for: book, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY)
+                // Update title progress only when not searching, so the title
+                // reflects the actual reading position rather than search matches.
+                if !showSearch {
+                    let safeCount = max(pageCount, 1)
+                    let safeIndex = min(max(pageIndex, 0), safeCount - 1)
+                    let progress = safeCount == 1 ? 1.0 : (Double(safeIndex) + pageOffsetY.clampedToUnit) / Double(max(safeCount - 1, 1))
+                    controller.openBookProgress = progress.clampedToUnit
+                }
             }
 
             if showSearch {
@@ -407,13 +415,27 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         }
 
         /// Compute and emit the current position (page index + sub-page offset).
+        /// Uses `currentDestination` for both page and offset to ensure they are
+        /// consistent — `currentPage` can flip to the next page before the
+        /// destination point catches up, causing progress to jump back and forth.
         private func emitPosition() {
-            guard let pdfView, let document = pdfView.document, let page = pdfView.currentPage else {
+            guard let pdfView, let document = pdfView.document,
+                  let destination = pdfView.currentDestination,
+                  let page = destination.page else {
                 return
             }
 
             let pageIndex = document.index(for: page)
-            let offsetY = currentNormalizedOffsetY(pdfView: pdfView, page: page)
+            let pageHeight = page.bounds(for: .mediaBox).height
+            let offsetY: Double
+            if pageHeight > 0 {
+                // PDF coords: Y increases upward from bottom-left.
+                // destination.point.y is the Y in PDF coords at the top of the viewport.
+                // offsetY=0 means top of page (point.y ≈ pageHeight), offsetY=1 means bottom (point.y ≈ 0).
+                offsetY = min(max(1.0 - (destination.point.y / pageHeight), 0), 1)
+            } else {
+                offsetY = 0
+            }
 
             // Deduplicate: skip if page and offset haven't meaningfully changed.
             let offsetThreshold = 0.005
@@ -427,21 +449,6 @@ struct PDFReaderRepresentable: UIViewRepresentable {
             lastSentPageIndex = pageIndex
             lastSentOffsetY = offsetY
             onPositionChange(pageIndex, document.pageCount, offsetY)
-        }
-
-        /// Returns the normalized Y offset (0 = top, 1 = bottom) for the current viewport
-        /// position within the given page.
-        private func currentNormalizedOffsetY(pdfView: PDFView, page: PDFPage) -> Double {
-            guard let destination = pdfView.currentDestination else {
-                return 0
-            }
-            let pageHeight = page.bounds(for: .mediaBox).height
-            guard pageHeight > 0 else { return 0 }
-            // PDF coords: Y increases upward from bottom-left.
-            // destination.point.y is the Y in PDF coords at the top of the viewport.
-            // offsetY=0 means top of page (point.y ≈ pageHeight), offsetY=1 means bottom (point.y ≈ 0).
-            let normalizedOffset = 1.0 - (destination.point.y / pageHeight)
-            return min(max(normalizedOffset, 0), 1)
         }
     }
 }

@@ -210,6 +210,11 @@ struct EPUBBookView: View {
                             chapterProgress: clampedChapterProgress,
                             overallProgress: clampedOverall
                         )
+                        // Update title progress only when not searching, so the title
+                        // reflects the actual reading position rather than search matches.
+                        if !showSearch {
+                            controller.openBookProgress = clampedOverall
+                        }
                     }
                 } else if isPreparing {
                     ProgressView("Opening EPUB…")

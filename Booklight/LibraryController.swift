@@ -562,17 +562,17 @@ final class LibraryController: ObservableObject {
 
         // Helper to scan a directory and yield (URL, format, fileSize, modifiedAt, hash)
         func processDirectory(at url: URL) -> [(URL, BookFormat, Int64, Date, String, String)] {
-            guard
-                let contents = try? fileManager.contentsOfDirectory(
-                    at: url,
-                    includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
-                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
-                )
-            else { return [] }
+            // Use enumerator instead of contentsOfDirectory to recursively
+            // discover books in subdirectories (e.g. organized by author/genre)
+            guard let enumerator = fileManager.enumerator(
+                at: url,
+                includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { return [] }
 
             var results: [(URL, BookFormat, Int64, Date, String, String)] = []
 
-            for fileURL in contents {
+            for case let fileURL as URL in enumerator {
                 guard let format = BookFormat(url: fileURL) else { continue }
                 guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]),
                     values.isRegularFile == true,

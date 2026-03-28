@@ -105,22 +105,39 @@ struct FileHashCache: Codable, Sendable {
     var records: [String: FileHashRecord] = [:]  // url.path -> record
 }
 
+/// Normalized PDF reading location expressed as page index plus within-page offset.
+struct PDFReadingPosition: Hashable, Sendable {
+    let pageIndex: Int
+    let pageCount: Int
+    let pageOffsetY: Double
+
+    init(pageIndex: Int, pageCount: Int, pageOffsetY: Double = 0) {
+        let safePageCount = max(pageCount, 1)
+        self.pageCount = safePageCount
+        self.pageIndex = min(max(pageIndex, 0), safePageCount - 1)
+        self.pageOffsetY = pageOffsetY.clampedToUnit
+    }
+
+    /// Convert a page-relative position into overall book progress.
+    /// PDF progress is measured across the intervals between page tops.
+    var progress: Double {
+        guard pageCount > 1 else { return 1 }
+        return ((Double(pageIndex) + pageOffsetY) / Double(pageCount - 1)).clampedToUnit
+    }
+}
+
 extension BookProgressState {
     static func pdf(bookID: String, pageIndex: Int, pageCount: Int, pageOffsetY: Double = 0, lastOpenedAt: Date) -> BookProgressState {
-        let safeCount = max(pageCount, 1)
-        let safeIndex = min(max(pageIndex, 0), safeCount - 1)
-        let clampedOffset = min(max(pageOffsetY, 0), 1)
-        // Sub-page progress: fractional page position divided by total pages.
-        let progress = safeCount == 1 ? 1 : (Double(safeIndex) + clampedOffset) / Double(max(safeCount - 1, 1))
+        let readingPosition = PDFReadingPosition(pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY)
         return BookProgressState(
             bookID: bookID,
             updatedAt: .now,
             lastOpenedAt: lastOpenedAt,
-            progress: progress,
-            isFinished: progress >= 0.999,
-            pdfPageIndex: safeIndex,
-            pdfPageCount: safeCount,
-            pdfPageOffsetY: clampedOffset,
+            progress: readingPosition.progress,
+            isFinished: readingPosition.progress >= 0.999,
+            pdfPageIndex: readingPosition.pageIndex,
+            pdfPageCount: readingPosition.pageCount,
+            pdfPageOffsetY: readingPosition.pageOffsetY,
             epubChapterIndex: nil,
             epubChapterPath: nil,
             epubChapterProgress: nil

@@ -208,10 +208,12 @@ struct PDFBookView: View {
                 // Update title progress only when not searching, so the title
                 // reflects the actual reading position rather than search matches.
                 if !showSearch {
-                    let safeCount = max(pageCount, 1)
-                    let safeIndex = min(max(pageIndex, 0), safeCount - 1)
-                    let progress = safeCount == 1 ? 1.0 : (Double(safeIndex) + pageOffsetY.clampedToUnit) / Double(max(safeCount - 1, 1))
-                    controller.openBookProgress = progress.clampedToUnit
+                    let readingPosition = PDFReadingPosition(
+                        pageIndex: pageIndex,
+                        pageCount: pageCount,
+                        pageOffsetY: pageOffsetY
+                    )
+                    controller.openBookProgress = readingPosition.progress.clampedToUnit
                 }
             }
 
@@ -315,25 +317,15 @@ struct PDFBookView: View {
         // position. We can't rely on the debounced position notification because
         // the coordinator deduplicates unchanged positions, and the user may not
         // have scrolled since the last emit.
-        guard let pdfView = scrollProxy.pdfView else { return }
-        guard let document = pdfView.document else { return }
-        guard let destination = pdfView.currentDestination else { return }
-        guard let page = destination.page else { return }
-        let topCenter = CGPoint(x: pdfView.bounds.midX, y: pdfView.bounds.minY)
-        let pagePoint = pdfView.convert(topCenter, to: page)
+        guard let readingPosition = scrollProxy.pdfView?.readingPosition() else { return }
 
-        let pageIndex = document.index(for: page)
-        let pageCount = document.pageCount
-        let pageHeight = page.bounds(for: .mediaBox).height
-        let offsetY = pageHeight > 0 ? min(max(1.0 - (pagePoint.y / pageHeight), 0), 1) : 0.0
-
-        controller.savePDFPosition(for: book, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: offsetY)
-
-        let safeCount = max(pageCount, 1)
-        let safeIndex = min(max(pageIndex, 0), safeCount - 1)
-        let progress = safeCount == 1 ? 1.0 : (Double(safeIndex) + offsetY) / Double(max(safeCount - 1, 1))
-        controller.openBookProgress = progress.clampedToUnit
-
+        controller.savePDFPosition(
+            for: book,
+            pageIndex: readingPosition.pageIndex,
+            pageCount: readingPosition.pageCount,
+            pageOffsetY: readingPosition.pageOffsetY
+        )
+        controller.openBookProgress = readingPosition.progress.clampedToUnit
     }
 }
 
@@ -498,35 +490,45 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         /// destination point catches up, causing progress to jump back and forth.
         private func emitPosition() {
             guard let pdfView else { return }
-            guard let document = pdfView.document else { return }
-            let topCenter = CGPoint(x: pdfView.bounds.midX, y: pdfView.bounds.minY)
-            guard let page = pdfView.page(for: topCenter, nearest: true) else { return }
-            let pagePoint = pdfView.convert(topCenter, to: page)
-
-            let pageIndex = document.index(for: page)
-            let pageHeight = page.bounds(for: .mediaBox).height
-            let offsetY: Double
-            if pageHeight > 0 {
-                // PDF coords: Y increases upward from bottom-left.
-                // destination.point.y is the Y in PDF coords at the top of the viewport.
-                // offsetY=0 means top of page (point.y ≈ pageHeight), offsetY=1 means bottom (point.y ≈ 0).
-                offsetY = min(max(1.0 - (pagePoint.y / pageHeight), 0), 1)
-            } else {
-                offsetY = 0
-            }
+            guard let readingPosition = pdfView.readingPosition() else { return }
 
             // Deduplicate: skip if page and offset haven't meaningfully changed.
             let offsetThreshold = 0.005
-            if lastSentPageIndex == pageIndex,
+            if lastSentPageIndex == readingPosition.pageIndex,
                 let lastOffset = lastSentOffsetY,
-                abs(lastOffset - offsetY) < offsetThreshold
+                abs(lastOffset - readingPosition.pageOffsetY) < offsetThreshold
             {
                 return
             }
 
-            lastSentPageIndex = pageIndex
-            lastSentOffsetY = offsetY
-            onPositionChange(pageIndex, document.pageCount, offsetY)
+            lastSentPageIndex = readingPosition.pageIndex
+            lastSentOffsetY = readingPosition.pageOffsetY
+            onPositionChange(
+                readingPosition.pageIndex,
+                readingPosition.pageCount,
+                readingPosition.pageOffsetY
+            )
         }
+    }
+}
+
+private extension PDFView {
+    /// Sample the top edge of the viewport instead of PDFKit's current page
+    /// bookkeeping so page index and within-page offset stay in sync.
+    func readingPosition() -> PDFReadingPosition? {
+        guard let document else { return nil }
+
+        let topCenter = CGPoint(x: bounds.midX, y: bounds.minY)
+        guard let page = page(for: topCenter, nearest: true) else { return nil }
+
+        let pagePoint = convert(topCenter, to: page)
+        let pageHeight = page.bounds(for: .mediaBox).height
+        let pageOffsetY = pageHeight > 0 ? (1.0 - (pagePoint.y / pageHeight)).clampedToUnit : 0
+
+        return PDFReadingPosition(
+            pageIndex: document.index(for: page),
+            pageCount: document.pageCount,
+            pageOffsetY: pageOffsetY
+        )
     }
 }

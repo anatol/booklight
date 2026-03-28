@@ -4,6 +4,15 @@ import SwiftUI
 
 @MainActor
 final class LibraryController: ObservableObject {
+    private struct ResolvedScopedURL {
+        let scopedURL: URL
+        let bookmarkData: Data
+
+        var displayURL: URL {
+            scopedURL.standardizedFileURL
+        }
+    }
+
     @Published private(set) var trackingDirectoryURL: URL?
     @Published private(set) var localLibraries: [URL] = []
 
@@ -181,11 +190,7 @@ final class LibraryController: ObservableObject {
         scopedLocalLibraries[index].stopAccessingSecurityScopedResource()
         scopedLocalLibraries.remove(at: index)
         localLibraries.remove(at: index)
-
-        let bookmarks = scopedLocalLibraries.compactMap {
-            try? $0.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
-        }
-        defaults.set(bookmarks, forKey: localLibrariesKey)
+        persistLocalLibrariesBookmarks()
 
         refresh(silently: false)
     }
@@ -361,57 +366,22 @@ final class LibraryController: ObservableObject {
     }
 
     private func selectTrackingDirectory(at url: URL) throws {
-        let bookmark = try url.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+        let resolved = try makeResolvedScopedURL(from: url)
 
         scopedTrackingDirectoryURL?.stopAccessingSecurityScopedResource()
-
-        var isStale = false
-        let resolved = try URL(
-            resolvingBookmarkData: bookmark,
-            options: bookmarkResolutionOptions,
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        )
-
-        guard resolved.startAccessingSecurityScopedResource() else {
-            throw LibraryError.accessDenied
-        }
-
-        scopedTrackingDirectoryURL = resolved
-        trackingDirectoryURL = resolved.standardizedFileURL
-        defaults.set(bookmark, forKey: trackingBookmarkKey)
-
-        if isStale {
-            let refreshed = try resolved.bookmarkData(
-                options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
-            defaults.set(refreshed, forKey: trackingBookmarkKey)
-        }
+        scopedTrackingDirectoryURL = resolved.scopedURL
+        trackingDirectoryURL = resolved.displayURL
+        defaults.set(resolved.bookmarkData, forKey: trackingBookmarkKey)
 
         refresh(silently: false)
     }
 
     private func addLocalLibrary(at url: URL) throws {
-        let bookmark = try url.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+        let resolved = try makeResolvedScopedURL(from: url)
 
-        var isStale = false
-        let resolved = try URL(
-            resolvingBookmarkData: bookmark,
-            options: bookmarkResolutionOptions,
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        )
-
-        guard resolved.startAccessingSecurityScopedResource() else {
-            throw LibraryError.accessDenied
-        }
-
-        scopedLocalLibraries.append(resolved)
-        localLibraries.append(resolved.standardizedFileURL)
-
-        let bookmarks = scopedLocalLibraries.compactMap {
-            try? $0.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
-        }
-        defaults.set(bookmarks, forKey: localLibrariesKey)
+        scopedLocalLibraries.append(resolved.scopedURL)
+        localLibraries.append(resolved.displayURL)
+        persistLocalLibrariesBookmarks()
 
         refresh(silently: false)
     }
@@ -419,53 +389,22 @@ final class LibraryController: ObservableObject {
     private func restoreLibraries() {
         if let data = defaults.data(forKey: trackingBookmarkKey) {
             do {
-                var isStale = false
-                let resolved = try URL(
-                    resolvingBookmarkData: data,
-                    options: bookmarkResolutionOptions,
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
-                )
-
-                if resolved.startAccessingSecurityScopedResource() {
-                    scopedTrackingDirectoryURL = resolved
-                    trackingDirectoryURL = resolved.standardizedFileURL
-
-                    if isStale {
-                        let refreshed = try resolved.bookmarkData(
-                            options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
-                        defaults.set(refreshed, forKey: trackingBookmarkKey)
-                    }
-                }
+                let resolved = try resolveScopedURL(from: data)
+                scopedTrackingDirectoryURL = resolved.scopedURL
+                trackingDirectoryURL = resolved.displayURL
+                defaults.set(resolved.bookmarkData, forKey: trackingBookmarkKey)
             } catch {
                 defaults.removeObject(forKey: trackingBookmarkKey)
             }
         }
 
         if let datas = defaults.array(forKey: localLibrariesKey) as? [Data] {
-            var updatedBookmarks: [Data] = []
             for data in datas {
-                do {
-                    var isStale = false
-                    let resolved = try URL(
-                        resolvingBookmarkData: data, options: bookmarkResolutionOptions, relativeTo: nil, bookmarkDataIsStale: &isStale)
-                    if resolved.startAccessingSecurityScopedResource() {
-                        scopedLocalLibraries.append(resolved)
-                        localLibraries.append(resolved.standardizedFileURL)
-
-                        if isStale {
-                            let refreshed = try resolved.bookmarkData(
-                                options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
-                            updatedBookmarks.append(refreshed)
-                        } else {
-                            updatedBookmarks.append(data)
-                        }
-                    }
-                } catch {
-                    // Skip
-                }
+                guard let resolved = try? resolveScopedURL(from: data) else { continue }
+                scopedLocalLibraries.append(resolved.scopedURL)
+                localLibraries.append(resolved.displayURL)
             }
-            defaults.set(updatedBookmarks, forKey: localLibrariesKey)
+            persistLocalLibrariesBookmarks()
         }
 
         if trackingDirectoryURL != nil {
@@ -500,6 +439,39 @@ final class LibraryController: ObservableObject {
                 self?.writeTasks[bookID] = nil
             }
         }
+    }
+
+    /// Round-trip through bookmark resolution immediately so we always store the
+    /// scoped URL variant the system actually granted access to.
+    private func makeResolvedScopedURL(from url: URL) throws -> ResolvedScopedURL {
+        let bookmark = try makeBookmarkData(for: url)
+        return try resolveScopedURL(from: bookmark)
+    }
+
+    private func makeBookmarkData(for url: URL) throws -> Data {
+        try url.bookmarkData(options: bookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+    }
+
+    private func resolveScopedURL(from bookmarkData: Data) throws -> ResolvedScopedURL {
+        var isStale = false
+        let resolved = try URL(
+            resolvingBookmarkData: bookmarkData,
+            options: bookmarkResolutionOptions,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+
+        guard resolved.startAccessingSecurityScopedResource() else {
+            throw LibraryError.accessDenied
+        }
+
+        let refreshedBookmarkData = isStale ? try makeBookmarkData(for: resolved) : bookmarkData
+        return ResolvedScopedURL(scopedURL: resolved, bookmarkData: refreshedBookmarkData)
+    }
+
+    private func persistLocalLibrariesBookmarks() {
+        let bookmarks = scopedLocalLibraries.compactMap { try? makeBookmarkData(for: $0) }
+        defaults.set(bookmarks, forKey: localLibrariesKey)
     }
 
     private func mergedLocalState(for bookID: String, with incomingState: BookProgressState) -> BookProgressState {

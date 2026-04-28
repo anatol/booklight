@@ -377,8 +377,7 @@ final class LibraryController: ObservableObject {
             return book
         }
 
-        // Ensure name uniqueness in tracking directory, though preserving name is required
-        let destURL = trackingBooksURL.appending(path: book.fileURL.lastPathComponent)
+        let destURL = trackingDestinationURL(for: book, in: trackingBooksURL)
 
         if !FileManager.default.fileExists(atPath: destURL.path()) {
             try FileManager.default.copyItem(at: book.fileURL, to: destURL)
@@ -393,6 +392,42 @@ final class LibraryController: ObservableObject {
         }
 
         return updated
+    }
+
+    /// Resolve a destination in the tracking directory that avoids collisions when
+    /// different books share the same source filename.
+    private func trackingDestinationURL(for book: Book, in trackingBooksURL: URL) -> URL {
+        let fileManager = FileManager.default
+        let preferredURL = trackingBooksURL.appending(path: book.fileURL.lastPathComponent)
+
+        if !fileManager.fileExists(atPath: preferredURL.path()) {
+            return preferredURL
+        }
+
+        // Reuse an existing file if it already matches byte-for-byte.
+        if fileManager.contentsEqual(atPath: book.fileURL.path(), andPath: preferredURL.path()) {
+            return preferredURL
+        }
+
+        let ext = book.fileURL.pathExtension
+        let base = book.fileURL.deletingPathExtension().lastPathComponent
+        let shortID = String(book.id.prefix(8))
+        var candidateBase = "\(base)-\(shortID)"
+        var counter = 2
+
+        while true {
+            let fileName = ext.isEmpty ? candidateBase : "\(candidateBase).\(ext)"
+            let candidateURL = trackingBooksURL.appending(path: fileName)
+
+            if !fileManager.fileExists(atPath: candidateURL.path())
+                || fileManager.contentsEqual(atPath: book.fileURL.path(), andPath: candidateURL.path())
+            {
+                return candidateURL
+            }
+
+            candidateBase = "\(base)-\(shortID)-\(counter)"
+            counter += 1
+        }
     }
 
     func markOpened(_ incomingBook: Book) {

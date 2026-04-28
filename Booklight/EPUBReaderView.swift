@@ -587,8 +587,7 @@ private struct EPUBWebView: UIViewRepresentable {
     static let scrollTrackingScript = """
         window.isReadyForProgress = false;
         window.currentCenterProgress = null;
-        let isResizing = false;
-        let resizeTimeout = null;
+        let resizeState = { isResizing: false, resizeTimeout: null };
 
         window.computeCenterProgress = () => {
           const centerY = window.innerHeight / 2;
@@ -625,7 +624,7 @@ private struct EPUBWebView: UIViewRepresentable {
           const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
           const overallProgress = Math.max(0, Math.min(1, window.scrollY / maxScroll));
 
-          if (!isResizing) {
+          if (!resizeState.isResizing) {
               window.currentCenterProgress = window.computeCenterProgress();
           }
 
@@ -640,7 +639,7 @@ private struct EPUBWebView: UIViewRepresentable {
 
         let scrollTimeout = null;
         window.addEventListener('scroll', () => {
-          if (!isResizing) {
+          if (!resizeState.isResizing) {
               window.currentCenterProgress = window.computeCenterProgress();
           }
           if (scrollTimeout) return;
@@ -651,13 +650,13 @@ private struct EPUBWebView: UIViewRepresentable {
         }, { passive: true });
 
         window.addEventListener('resize', () => {
-          isResizing = true;
+          resizeState.isResizing = true;
           if (window.currentCenterProgress) {
             window.restoreCenterProgress(window.currentCenterProgress);
           }
-          clearTimeout(resizeTimeout);
-          resizeTimeout = setTimeout(() => {
-            isResizing = false;
+          clearTimeout(resizeState.resizeTimeout);
+          resizeState.resizeTimeout = setTimeout(() => {
+            resizeState.isResizing = false;
             sendProgress();
           }, 200);
         });

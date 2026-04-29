@@ -317,6 +317,37 @@ final class LibraryController: ObservableObject {
         refresh(silently: true)
     }
 
+    func markUnread(book: Book) {
+        var state =
+            book.progressState
+            ?? BookProgressState(
+                bookID: book.id,
+                updatedAt: .now,
+                lastOpenedAt: .now,
+                progress: 0,
+                isFinished: false,
+                pdfPageIndex: nil,
+                pdfPageCount: nil,
+                epubChapterIndex: nil,
+                epubChapterPath: nil,
+                epubChapterProgress: nil
+            )
+
+        state.updatedAt = .now
+        state.progress = 0
+        state.isFinished = false
+        state.pdfPageIndex = 0
+        state.pdfPageCount = nil
+        state.pdfPageOffsetY = 0
+        state.epubChapterIndex = 0
+        state.epubChapterPath = nil
+        state.epubChapterProgress = 0
+
+        let normalized = state.normalized()
+        apply(state: normalized, toBookID: book.id)
+        schedulePersist(state: normalized)
+    }
+
     private func scheduleSearchDebounce() {
         searchDebounceTask?.cancel()
 

@@ -227,6 +227,12 @@ private struct BookGallerySection: View {
                     .buttonStyle(.plain)
                     .contextMenu {
                         if isActiveSection {
+                            Button {
+                                controller.markUnread(book: book)
+                            } label: {
+                                Label("Mark as Unread", systemImage: "arrow.uturn.backward.circle")
+                            }
+
                             Button(role: .destructive) {
                                 controller.removeFromActive(book: book)
                             } label: {

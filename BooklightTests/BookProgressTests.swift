@@ -116,4 +116,18 @@ final class BookProgressTests: XCTestCase {
         XCTAssertEqual(merged.lastOpenedAt, newDate)
         XCTAssertEqual(merged.updatedAt, newDate)
     }
+
+    func testCanonicalProgressStateFileNameFilter() {
+        let validLower = String(repeating: "a", count: 64) + ".json"
+        let validUpper = String(repeating: "B", count: 64) + ".json"
+        let syncConflict = String(repeating: "c", count: 64) + ".sync-conflict-20260428-192614-XL4MEVC.json"
+        let wrongExt = String(repeating: "d", count: 64) + ".txt"
+        let wrongLength = String(repeating: "e", count: 63) + ".json"
+
+        XCTAssertTrue(LibraryController.isCanonicalProgressStateFileName(validLower))
+        XCTAssertTrue(LibraryController.isCanonicalProgressStateFileName(validUpper))
+        XCTAssertFalse(LibraryController.isCanonicalProgressStateFileName(syncConflict))
+        XCTAssertFalse(LibraryController.isCanonicalProgressStateFileName(wrongExt))
+        XCTAssertFalse(LibraryController.isCanonicalProgressStateFileName(wrongLength))
+    }
 }

@@ -832,7 +832,7 @@ final class LibraryController: ObservableObject {
         var results: [String: BookProgressState] = [:]
         let files = try fileManager.contentsOfDirectory(at: stateDirectory, includingPropertiesForKeys: nil)
 
-        for fileURL in files where fileURL.pathExtension.lowercased() == "json" {
+        for fileURL in files where isCanonicalProgressStateFileName(fileURL.lastPathComponent) {
             do {
                 let state = try decoder.decode(BookProgressState.self, from: Data(contentsOf: fileURL)).normalized()
                 results[state.bookID] = state
@@ -851,6 +851,27 @@ final class LibraryController: ObservableObject {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(BookProgressState.self, from: Data(contentsOf: url)).normalized()
+    }
+
+    nonisolated static func isCanonicalProgressStateFileName(_ fileName: String) -> Bool {
+        let parts = fileName.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 2, parts[1].lowercased() == "json" else {
+            return false
+        }
+
+        let bookID = parts[0]
+        guard bookID.count == 64 else {
+            return false
+        }
+
+        return bookID.allSatisfy { char in
+            switch char {
+            case "0"..."9", "a"..."f", "A"..."F":
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     nonisolated static func mergeStates(local: BookProgressState, remote: BookProgressState?) -> BookProgressState {

@@ -79,6 +79,7 @@ final class LibraryController: ObservableObject {
     /// Current reading progress (0.0–1.0) of the open book, displayed in the window title.
     /// Not updated during search navigation so the title reflects the actual reading position.
     @Published var openBookProgress: Double?
+    @Published private var readerSyncTokens: [String: UUID] = [:]
 
     private let trackingBookmarkKey = "Booklight.trackingDirectoryBookmark"
     private let localLibrariesKey = "Booklight.localLibrariesBookmarks"
@@ -90,6 +91,7 @@ final class LibraryController: ObservableObject {
     private var searchDebounceTask: Task<Void, Never>?
     private var writeTasks: [String: Task<Void, Never>] = [:]
     private var writeTaskIDs: [String: UUID] = [:]
+    private var lastKnownProgressFileModification: [String: Date] = [:]
 
     private var scopedTrackingDirectoryURL: URL?
     private var scopedLocalLibraries: [URL] = []
@@ -527,6 +529,41 @@ final class LibraryController: ObservableObject {
         schedulePersist(state: state)
     }
 
+    func readerSyncToken(for bookID: String) -> UUID? {
+        readerSyncTokens[bookID]
+    }
+
+    func registerReaderProgressObservation(for bookID: String) {
+        guard let trackingDirectoryURL else { return }
+        let stateFileURL = Self.progressStateFileURL(for: bookID, trackingDirectoryURL: trackingDirectoryURL)
+        if let modifiedAt = Self.modificationDate(of: stateFileURL) {
+            lastKnownProgressFileModification[bookID] = modifiedAt
+        }
+    }
+
+    func synchronizeReaderProgressIfNeeded(for bookID: String) {
+        guard let trackingDirectoryURL else { return }
+        let stateFileURL = Self.progressStateFileURL(for: bookID, trackingDirectoryURL: trackingDirectoryURL)
+        guard let modifiedAt = Self.modificationDate(of: stateFileURL) else { return }
+
+        let lastKnown = lastKnownProgressFileModification[bookID] ?? .distantPast
+        guard modifiedAt.timeIntervalSince(lastKnown) > 0.001 else { return }
+
+        guard let diskState = try? Self.loadState(from: stateFileURL) else {
+            lastKnownProgressFileModification[bookID] = modifiedAt
+            return
+        }
+
+        let normalized = diskState.normalized()
+        apply(state: normalized, toBookID: bookID)
+        lastKnownProgressFileModification[bookID] = modifiedAt
+        readerSyncTokens[bookID] = UUID()
+
+        if openBookTitle != nil {
+            openBookProgress = normalized.progress
+        }
+    }
+
     private func startPolling() {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -611,6 +648,13 @@ final class LibraryController: ObservableObject {
                 try await Task.detached(priority: .utility) {
                     try Self.persist(state: normalized, at: trackingDirectoryURL)
                 }.value
+                let stateFileURL = Self.progressStateFileURL(for: bookID, trackingDirectoryURL: trackingDirectoryURL)
+                let modifiedAt = Self.modificationDate(of: stateFileURL)
+                await MainActor.run {
+                    if let modifiedAt {
+                        self?.lastKnownProgressFileModification[bookID] = modifiedAt
+                    }
+                }
             } catch is CancellationError {
                 return
             } catch {
@@ -818,6 +862,19 @@ final class LibraryController: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(merged).write(to: stateFileURL, options: [.atomic])
+    }
+
+    private nonisolated static func progressStateFileURL(for bookID: String, trackingDirectoryURL: URL) -> URL {
+        trackingDirectoryURL
+            .appending(path: "progress", directoryHint: .isDirectory)
+            .appending(path: "\(bookID).json")
+    }
+
+    private nonisolated static func modificationDate(of fileURL: URL) -> Date? {
+        guard let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]) else {
+            return nil
+        }
+        return values.contentModificationDate
     }
 
     private nonisolated static func loadStates(from stateDirectory: URL) throws -> [String: BookProgressState] {

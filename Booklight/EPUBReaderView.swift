@@ -186,6 +186,7 @@ struct EPUBBookView: View {
     let book: Book
     let bookURL: URL
     @ObservedObject var controller: LibraryController
+    let syncToken: UUID?
 
     @State private var document: EPUBDocument?
     @State private var loadError: String?
@@ -204,6 +205,10 @@ struct EPUBBookView: View {
                     EPUBWebView(
                         document: document,
                         initialScrollTarget: initialScrollTarget,
+                        externalScrollToken: syncToken,
+                        externalChapterIndex: book.progressState?.epubChapterIndex ?? 0,
+                        externalChapterProgress: book.progressState?.epubChapterProgress ?? 0,
+                        externalOverallProgress: book.progressState?.progress ?? 0,
                         scrollProxy: scrollProxy,
                         initialFontSizePercent: scrollProxy.fontSizePercent,
                         onContentTapped: {
@@ -417,6 +422,10 @@ private struct EPUBScrollTarget: Equatable {
 private struct EPUBWebView: UIViewRepresentable {
     let document: EPUBDocument
     let initialScrollTarget: EPUBScrollTarget?
+    let externalScrollToken: UUID?
+    let externalChapterIndex: Int
+    let externalChapterProgress: Double
+    let externalOverallProgress: Double
     let scrollProxy: EPUBScrollProxy
     /// Initial font size percentage to apply after the document loads.
     let initialFontSizePercent: Int
@@ -468,6 +477,12 @@ private struct EPUBWebView: UIViewRepresentable {
         context.coordinator.onContentTapped = onContentTapped
         scrollProxy.webView = webView
         context.coordinator.loadCombinedDocument(scrollTarget: initialScrollTarget)
+        context.coordinator.applyExternalScrollIfNeeded(
+            token: externalScrollToken,
+            chapterIndex: externalChapterIndex,
+            chapterProgress: externalChapterProgress,
+            overallProgress: externalOverallProgress
+        )
     }
 
     // MARK: - JavaScript for in-document text search
@@ -692,6 +707,9 @@ private struct EPUBWebView: UIViewRepresentable {
         private var pendingScrollTarget: EPUBScrollTarget?
         /// Font size percentage to apply after document load (restored from saved state).
         private var initialFontSizePercent: Int
+        private var appliedExternalScrollToken: UUID?
+        private var isDocumentReadyForExternalScroll = false
+        private var pendingExternalScroll: (token: UUID, chapterIndex: Int, chapterProgress: Double, overallProgress: Double)?
 
         init(
             document: EPUBDocument, initialFontSizePercent: Int, onProgressChange: @escaping (Int, Double, Double) -> Void,
@@ -724,6 +742,7 @@ private struct EPUBWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard let target = pendingScrollTarget else { return }
+            isDocumentReadyForExternalScroll = false
 
             // Apply saved font size FIRST so the DOM reflows before we compute
             // scroll offsets — otherwise the position would be wrong for the
@@ -765,7 +784,16 @@ private struct EPUBWebView: UIViewRepresentable {
             // Apply font size first, then scroll after reflow completes.
             if fontSizeJS.isEmpty {
                 webView.evaluateJavaScript(scrollJS) { _, _ in
+                    self.isDocumentReadyForExternalScroll = true
                     webView.evaluateJavaScript("window.isReadyForProgress = true; sendProgress();")
+                    if let pending = self.pendingExternalScroll {
+                        self.applyExternalScroll(
+                            token: pending.token,
+                            chapterIndex: pending.chapterIndex,
+                            chapterProgress: pending.chapterProgress,
+                            overallProgress: pending.overallProgress
+                        )
+                    }
                 }
             } else {
                 webView.evaluateJavaScript(fontSizeJS) { _, _ in
@@ -774,8 +802,57 @@ private struct EPUBWebView: UIViewRepresentable {
                     let wrappedScroll =
                         "requestAnimationFrame(function() { \(scrollJS); setTimeout(() => { window.isReadyForProgress = true; sendProgress(); }, 50); });"
                     webView.evaluateJavaScript(wrappedScroll)
+                    self.isDocumentReadyForExternalScroll = true
+                    if let pending = self.pendingExternalScroll {
+                        self.applyExternalScroll(
+                            token: pending.token,
+                            chapterIndex: pending.chapterIndex,
+                            chapterProgress: pending.chapterProgress,
+                            overallProgress: pending.overallProgress
+                        )
+                    }
                 }
             }
+        }
+
+        func applyExternalScrollIfNeeded(token: UUID?, chapterIndex: Int, chapterProgress: Double, overallProgress: Double) {
+            guard let token, token != appliedExternalScrollToken else { return }
+            pendingExternalScroll = (token, chapterIndex, chapterProgress, overallProgress)
+            guard isDocumentReadyForExternalScroll else { return }
+            applyExternalScroll(
+                token: token,
+                chapterIndex: chapterIndex,
+                chapterProgress: chapterProgress,
+                overallProgress: overallProgress
+            )
+        }
+
+        private func applyExternalScroll(token: UUID, chapterIndex: Int, chapterProgress: Double, overallProgress: Double) {
+            guard let webView else { return }
+            guard token != appliedExternalScrollToken else { return }
+            appliedExternalScrollToken = token
+            let safeProgress = chapterProgress.clampedToUnit
+            let safeOverall = overallProgress.clampedToUnit
+            let js = """
+                const chapter = document.getElementById('chapter-\(chapterIndex)');
+                if (chapter) {
+                    const rect = chapter.getBoundingClientRect();
+                    const chapterHeight = Math.max(rect.height, 1);
+                    const offset = chapterHeight * \(safeProgress);
+                    window.scrollTo(0, window.scrollY + rect.top + offset - window.innerHeight / 2);
+                } else {
+                    const root = document.documentElement;
+                    const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
+                    window.scrollTo(0, maxScroll * \(safeOverall));
+                }
+                window.currentCenterProgress = {
+                    chapterIndex: \(chapterIndex),
+                    chapterProgress: \(safeProgress)
+                };
+                sendProgress();
+                """
+            webView.evaluateJavaScript(js)
+            pendingExternalScroll = nil
         }
 
         // MARK: WKScriptMessageHandler

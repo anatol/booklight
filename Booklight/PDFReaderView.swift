@@ -183,6 +183,7 @@ struct PDFBookView: View {
     let book: Book
     let bookURL: URL
     @ObservedObject var controller: LibraryController
+    let syncToken: UUID?
     @StateObject private var scrollProxy = PDFScrollProxy()
 
     @State private var showSearch = false
@@ -194,6 +195,9 @@ struct PDFBookView: View {
                 documentURL: bookURL,
                 initialPageIndex: book.progressState?.pdfPageIndex ?? 0,
                 initialPageOffsetY: book.progressState?.pdfPageOffsetY ?? 0,
+                externalJumpToken: syncToken,
+                externalPageIndex: book.progressState?.pdfPageIndex ?? 0,
+                externalPageOffsetY: book.progressState?.pdfPageOffsetY ?? 0,
                 scrollProxy: scrollProxy,
                 onContentTapped: {
                     // Clicking content during search confirms the current
@@ -334,6 +338,10 @@ struct PDFReaderRepresentable: UIViewRepresentable {
     let initialPageIndex: Int
     /// Normalized Y offset within the initial page (0 = top, 1 = bottom).
     let initialPageOffsetY: Double
+    /// External-sync token; when changed, jump to the provided page+offset.
+    let externalJumpToken: UUID?
+    let externalPageIndex: Int
+    let externalPageOffsetY: Double
     let scrollProxy: PDFScrollProxy
     /// Called when the user taps on the PDF content area.
     let onContentTapped: () -> Void
@@ -377,6 +385,11 @@ struct PDFReaderRepresentable: UIViewRepresentable {
             initialPageOffsetY: initialPageOffsetY,
             in: pdfView
         )
+        context.coordinator.applyExternalJumpIfNeeded(
+            token: externalJumpToken,
+            pageIndex: externalPageIndex,
+            pageOffsetY: externalPageOffsetY
+        )
     }
 
     @MainActor
@@ -392,6 +405,7 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         private var scrollObserver: NSObjectProtocol?
         private var lastSentPageIndex: Int?
         private var lastSentOffsetY: Double?
+        private var appliedExternalJumpToken: UUID?
 
         /// Debounce timer for scroll-based position saves to avoid excessive writes.
         private var scrollDebounceTimer: Timer?
@@ -508,6 +522,25 @@ struct PDFReaderRepresentable: UIViewRepresentable {
                 readingPosition.pageCount,
                 readingPosition.pageOffsetY
             )
+        }
+
+        func applyExternalJumpIfNeeded(token: UUID?, pageIndex: Int, pageOffsetY: Double) {
+            guard let token, token != appliedExternalJumpToken else { return }
+            appliedExternalJumpToken = token
+            guard let pdfView, let document = pdfView.document else { return }
+
+            let safeIndex = min(max(pageIndex, 0), max(document.pageCount - 1, 0))
+            guard let page = document.page(at: safeIndex) else { return }
+
+            if pageOffsetY > 0 {
+                let pageHeight = page.bounds(for: .mediaBox).height
+                let pdfY = pageHeight * (1.0 - pageOffsetY.clampedToUnit)
+                let destination = PDFDestination(page: page, at: CGPoint(x: 0, y: pdfY))
+                pdfView.go(to: destination)
+            } else {
+                pdfView.go(to: page)
+            }
+            emitPosition()
         }
     }
 }

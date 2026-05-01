@@ -5,6 +5,7 @@ struct ReaderContainerView: View {
     @ObservedObject var controller: LibraryController
     let bookID: String
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Controls visibility of the floating back button in the top-left corner.
     @State private var showBackButton = false
@@ -36,9 +37,19 @@ struct ReaderContainerView: View {
                 if let book, let bookURL = controller.absoluteURL(for: book) {
                     switch book.format {
                     case .pdf:
-                        PDFBookView(book: book, bookURL: bookURL, controller: controller)
+                        PDFBookView(
+                            book: book,
+                            bookURL: bookURL,
+                            controller: controller,
+                            syncToken: controller.readerSyncToken(for: bookID)
+                        )
                     case .epub:
-                        EPUBBookView(book: book, bookURL: bookURL, controller: controller)
+                        EPUBBookView(
+                            book: book,
+                            bookURL: bookURL,
+                            controller: controller,
+                            syncToken: controller.readerSyncToken(for: bookID)
+                        )
                     }
                 } else {
                     ContentUnavailableView(
@@ -87,6 +98,7 @@ struct ReaderContainerView: View {
             controller.openBookProgress = book?.progress
             controller.openBookTitle = windowTitle
             setSceneTitle(windowTitle)
+            controller.registerReaderProgressObservation(for: bookID)
         }
         .onDisappear {
             controller.openBookTitle = nil
@@ -100,6 +112,10 @@ struct ReaderContainerView: View {
             let title = windowTitle
             controller.openBookTitle = title
             setSceneTitle(title)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            controller.synchronizeReaderProgressIfNeeded(for: bookID)
         }
     }
 

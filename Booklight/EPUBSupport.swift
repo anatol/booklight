@@ -118,11 +118,11 @@ enum EPUBPreparation {
 /// Combines all EPUB spine chapters into a single HTML document for continuous scrolling.
 /// Each chapter's body content is extracted, resource paths are rewritten to be relative
 /// to the extraction root, and everything is wrapped in chapter dividers.
-/// The result is cached as `_combined-v3.html` in the extraction directory — it's automatically
+/// The result is cached as `_combined-v5.html` in the extraction directory — it's automatically
 /// invalidated when the EPUB is re-extracted (the directory is wiped on version change).
 enum EPUBCombiner {
     /// Builds (or returns cached) combined HTML from all spine items.
-    /// - Returns: URL of the `_combined-v3.html` file in the extraction directory.
+    /// - Returns: URL of the `_combined-v5.html` file in the extraction directory.
     static func buildCombinedHTML(
         spine: [EPUBDocument.SpineItem],
         extractedRootURL: URL
@@ -130,7 +130,7 @@ enum EPUBCombiner {
         // The filename carries a layout version suffix so that bumping the reading
         // CSS below regenerates the combined document for already-extracted books
         // (rebuilding from the cached chapters is cheap — no re-unzip required).
-        let combinedURL = extractedRootURL.appending(path: "_combined-v4.html")
+        let combinedURL = extractedRootURL.appending(path: "_combined-v5.html")
 
         // If the combined file already exists (from a previous open), reuse it.
         if FileManager.default.fileExists(atPath: combinedURL.path()) {
@@ -258,6 +258,41 @@ enum EPUBCombiner {
             /* Prevent EPUB link colors from bleeding into block elements wrapped
                in <a> tags (common in textbooks for navigation anchors). */
             a { color: inherit; }
+
+            /* Lists.
+               Many EPUBs run a global CSS reset (margin:0; padding:0;
+               list-style:none) and only restore markers and indentation through
+               publisher-specific classes. When a list carries no such class — or
+               the book ships no list CSS at all — the markers collapse against the
+               body's left padding and the items read as run-together paragraphs
+               with no bullets or numbers. These fallbacks give such lists a
+               readable indent and visible markers.
+
+               They are deliberately low-specificity element selectors with no
+               !important, and they sit *after* the EPUB's own stylesheets. So at
+               equal specificity they win over the blanket element-level reset
+               (`ul, ol { list-style: none }`) but lose to any publisher rule that
+               targets a class or descendant path (e.g. `ul.UList`, `body ol`),
+               which is almost always more specific. Net effect: bare/unstyled
+               lists get fixed, intentionally-styled lists are left untouched. */
+            ul, ol {
+                margin-top: 1em;
+                margin-bottom: 1em;
+                /* Indent enough that markers sit inside the reading column rather
+                   than in the body's side padding, where they'd crowd or clip
+                   against the screen edge. em units scale with the reader's
+                   font-size control. */
+                padding-left: 1.75em;
+            }
+            ul { list-style-type: disc; }
+            ol { list-style-type: decimal; }
+            /* Distinct markers for nested unordered lists, matching print style. */
+            ul ul { list-style-type: circle; }
+            ul ul ul { list-style-type: square; }
+            /* Nested lists shouldn't add a large vertical gap inside their item. */
+            li > ul, li > ol { margin-top: 0.4em; margin-bottom: 0.4em; }
+            /* Definition lists: indent definitions under their terms. */
+            dd { margin-left: 1.75em; }
 
             /* Divider between chapters for visual separation */
             .epub-chapter-divider {

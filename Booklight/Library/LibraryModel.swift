@@ -14,7 +14,13 @@ final class LibraryModel {
     /// True once the first scan has finished, so screens can tell "still
     /// scanning" from "scanned and found nothing".
     private(set) var hasLoadedOnce = false
+    /// Failures of something the user just did (picking a folder, opening or
+    /// removing a book). Shown as a modal alert.
     var errorMessage: String?
+    /// Failures of background work (scans, delayed progress saves). Shown as a
+    /// dismissible banner so a persistent problem, such as an unplugged drive,
+    /// doesn't re-trigger a modal alert on every refresh.
+    private(set) var backgroundProblem: String?
     /// Bumped per book when another device changed its progress, telling an open
     /// reader to jump to the new position.
     private var readerSyncTokens: [String: UUID] = [:]
@@ -41,6 +47,8 @@ final class LibraryModel {
     /// Safety net for folders whose provider doesn't deliver change events.
     @ObservationIgnored private var fallbackPollTask: Task<Void, Never>?
     private static let fallbackPollInterval: Duration = .seconds(60)
+    /// Consecutive failed scans; lengthens the fallback poll interval.
+    @ObservationIgnored private var consecutiveScanFailures = 0
 
     init() {
         folders = FolderAccess()
@@ -57,6 +65,10 @@ final class LibraryModel {
     deinit {
         refreshTask?.cancel()
         fallbackPollTask?.cancel()
+    }
+
+    func dismissBackgroundProblem() {
+        backgroundProblem = nil
     }
 
     func book(withID bookID: String) -> Book? {
@@ -112,7 +124,7 @@ final class LibraryModel {
         let layout = TrackingLayout(root: trackingDirectoryURL)
         startMonitoring(layout)
         progressStore = ProgressStore(layout: layout) { [weak self] error in
-            self?.errorMessage = error.localizedDescription
+            self?.backgroundProblem = "Couldn’t save reading progress: \(error.localizedDescription)"
         }
         shelf = ActiveShelf(layout: layout)
     }
@@ -203,11 +215,13 @@ final class LibraryModel {
                     self.books = refreshed
                 }
                 self.hasLoadedOnce = true
-                self.errorMessage = nil
+                self.backgroundProblem = nil
+                self.consecutiveScanFailures = 0
             } catch {
                 guard !Task.isCancelled, self?.refreshGeneration == generation else { return }
                 self?.hasLoadedOnce = true
-                self?.errorMessage = error.localizedDescription
+                self?.consecutiveScanFailures += 1
+                self?.backgroundProblem = "Couldn’t read your library: \(error.localizedDescription)"
             }
         }
     }
@@ -226,7 +240,10 @@ final class LibraryModel {
     private func startFallbackPolling() {
         fallbackPollTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: Self.fallbackPollInterval)
+                // Back off while scans keep failing (up to 16x) instead of retrying
+                // a missing drive every minute.
+                let backoff = 1 << min(self?.consecutiveScanFailures ?? 0, 4)
+                try? await Task.sleep(for: Self.fallbackPollInterval * backoff)
                 guard !Task.isCancelled else { return }
                 self?.refresh(silently: true, scope: .trackingDirectory)
             }
@@ -353,7 +370,7 @@ final class LibraryModel {
         do {
             try await progressStore.flush()
         } catch {
-            errorMessage = error.localizedDescription
+            backgroundProblem = "Couldn’t save reading progress: \(error.localizedDescription)"
         }
     }
 

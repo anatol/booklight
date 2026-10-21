@@ -248,6 +248,52 @@ private struct LibraryContentView: View {
             ReaderContainerView(library: library, bookID: book.id, readerTitle: $readerTitle)
         }
         .background(Color(uiColor: .systemGroupedBackground))
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let problem = library.backgroundProblem {
+                ProblemBanner(
+                    message: problem,
+                    onRetry: { library.refresh(silently: false, restart: true) },
+                    onDismiss: { library.dismissBackgroundProblem() }
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: library.backgroundProblem)
+    }
+}
+
+/// Inline, dismissible notice for background failures.
+private struct ProblemBanner: View {
+    let message: String
+    let onRetry: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+
+            Text(message)
+                .font(.subheadline)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button("Retry", action: onRetry)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.footnote.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) { Divider() }
+        .accessibilityElement(children: .combine)
     }
 }
 

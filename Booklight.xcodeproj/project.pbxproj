@@ -6,20 +6,6 @@
 	objectVersion = 70;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		AA0000000000000000000001 /* BooklightApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000011 /* BooklightApp.swift */; };
-		AA0000000000000000000002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000012 /* Models.swift */; };
-		AA0000000000000000000003 /* LibraryController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000013 /* LibraryController.swift */; };
-		AA0000000000000000000004 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000014 /* ContentView.swift */; };
-		AA0000000000000000000005 /* ReaderContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000015 /* ReaderContainerView.swift */; };
-		AA0000000000000000000006 /* PDFReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000016 /* PDFReaderView.swift */; };
-		AA0000000000000000000007 /* EPUBSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000017 /* EPUBSupport.swift */; };
-		AA0000000000000000000008 /* EPUBReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000018 /* EPUBReaderView.swift */; };
-		AA0000000000000000000009 /* BookArtwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000019 /* BookArtwork.swift */; };
-		AA000000000000000000000A /* ReaderSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001A /* ReaderSearch.swift */; };
-		AA000000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001B /* Assets.xcassets */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXContainerItemProxy section */
 		DE636BD32F742D48002BED53 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -32,21 +18,11 @@
 
 /* Begin PBXFileReference section */
 		AA0000000000000000000010 /* Booklight.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Booklight.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		AA0000000000000000000011 /* BooklightApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BooklightApp.swift; sourceTree = "<group>"; };
-		AA0000000000000000000012 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		AA0000000000000000000013 /* LibraryController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryController.swift; sourceTree = "<group>"; };
-		AA0000000000000000000014 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		AA0000000000000000000015 /* ReaderContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderContainerView.swift; sourceTree = "<group>"; };
-		AA0000000000000000000016 /* PDFReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFReaderView.swift; sourceTree = "<group>"; };
-		AA0000000000000000000017 /* EPUBSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBSupport.swift; sourceTree = "<group>"; };
-		AA0000000000000000000018 /* EPUBReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBReaderView.swift; sourceTree = "<group>"; };
-		AA0000000000000000000019 /* BookArtwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookArtwork.swift; sourceTree = "<group>"; };
-		AA000000000000000000001A /* ReaderSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderSearch.swift; sourceTree = "<group>"; };
-		AA000000000000000000001B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		DE636BCD2F742D48002BED53 /* BooklightTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BooklightTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		AA0000000000000000000031 /* Booklight */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Booklight; sourceTree = "<group>"; };
 		DE636BCE2F742D48002BED53 /* BooklightTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = BooklightTests; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
@@ -77,24 +53,6 @@
 			);
 			sourceTree = "<group>";
 		};
-		AA0000000000000000000031 /* Booklight */ = {
-			isa = PBXGroup;
-			children = (
-				AA0000000000000000000011 /* BooklightApp.swift */,
-				AA0000000000000000000012 /* Models.swift */,
-				AA0000000000000000000013 /* LibraryController.swift */,
-				AA0000000000000000000014 /* ContentView.swift */,
-				AA0000000000000000000015 /* ReaderContainerView.swift */,
-				AA0000000000000000000016 /* PDFReaderView.swift */,
-				AA0000000000000000000017 /* EPUBSupport.swift */,
-				AA0000000000000000000018 /* EPUBReaderView.swift */,
-				AA0000000000000000000019 /* BookArtwork.swift */,
-				AA000000000000000000001A /* ReaderSearch.swift */,
-				AA000000000000000000001B /* Assets.xcassets */,
-			);
-			path = Booklight;
-			sourceTree = "<group>";
-		};
 		AA0000000000000000000032 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -118,6 +76,9 @@
 			buildRules = (
 			);
 			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				AA0000000000000000000031 /* Booklight */,
 			);
 			name = Booklight;
 			productName = Booklight;
@@ -190,7 +151,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AA000000000000000000000B /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -208,16 +168,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AA0000000000000000000001 /* BooklightApp.swift in Sources */,
-				AA0000000000000000000002 /* Models.swift in Sources */,
-				AA0000000000000000000003 /* LibraryController.swift in Sources */,
-				AA0000000000000000000004 /* ContentView.swift in Sources */,
-				AA0000000000000000000005 /* ReaderContainerView.swift in Sources */,
-				AA0000000000000000000006 /* PDFReaderView.swift in Sources */,
-				AA0000000000000000000007 /* EPUBSupport.swift in Sources */,
-				AA0000000000000000000008 /* EPUBReaderView.swift in Sources */,
-				AA0000000000000000000009 /* BookArtwork.swift in Sources */,
-				AA000000000000000000000A /* ReaderSearch.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

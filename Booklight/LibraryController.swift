@@ -307,15 +307,30 @@ final class LibraryController: ObservableObject {
     }
 
     func removeFromActive(book: Book) {
-        // Find if it's in tracking directory
         guard let trackingDirectoryURL else { return }
         let trackingBooksURL = trackingDirectoryURL.appending(path: "books", directoryHint: .isDirectory)
-        let stateDirectory = trackingDirectoryURL.appending(path: "progress", directoryHint: .isDirectory)
+        let fileManager = FileManager.default
 
-        // Remove file
-        try? FileManager.default.removeItem(at: trackingBooksURL.appending(path: book.fileURL.lastPathComponent))
-        // Remove progress
-        try? FileManager.default.removeItem(at: stateDirectory.appending(path: "\(book.id).json"))
+        do {
+            // Only delete the book's own tracked copy. If the copy is gone and the
+            // book now resolves to a local library, a same-named file in books/
+            // belongs to a different book and must be left alone.
+            if Self.isFileURL(book.fileURL, containedInDirectory: trackingBooksURL) {
+                try fileManager.removeItem(at: book.fileURL)
+            }
+            let stateFileURL = Self.progressStateFileURL(for: book.id, trackingDirectoryURL: trackingDirectoryURL)
+            if fileManager.fileExists(atPath: stateFileURL.path()) {
+                try fileManager.removeItem(at: stateFileURL)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        // Drop any queued write so it doesn't resurrect the progress file.
+        writeTasks[book.id]?.cancel()
+        writeTasks[book.id] = nil
+        writeTaskIDs[book.id] = nil
+        pendingWriteStates[book.id] = nil
 
         refresh(silently: true)
     }

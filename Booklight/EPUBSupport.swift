@@ -118,11 +118,11 @@ enum EPUBPreparation {
 /// Combines all EPUB spine chapters into a single HTML document for continuous scrolling.
 /// Each chapter's body content is extracted, resource paths are rewritten to be relative
 /// to the extraction root, and everything is wrapped in chapter dividers.
-/// The result is cached as `_combined-v7.html` in the extraction directory — it's automatically
+/// The result is cached as `_combined-v8.html` in the extraction directory — it's automatically
 /// invalidated when the EPUB is re-extracted (the directory is wiped on version change).
 enum EPUBCombiner {
     /// Builds (or returns cached) combined HTML from all spine items.
-    /// - Returns: URL of the `_combined-v7.html` file in the extraction directory.
+    /// - Returns: URL of the `_combined-v8.html` file in the extraction directory.
     static func buildCombinedHTML(
         spine: [EPUBDocument.SpineItem],
         extractedRootURL: URL
@@ -130,7 +130,7 @@ enum EPUBCombiner {
         // The filename carries a layout version suffix so that bumping the reading
         // CSS below regenerates the combined document for already-extracted books
         // (rebuilding from the cached chapters is cheap — no re-unzip required).
-        let combinedURL = extractedRootURL.appending(path: "_combined-v7.html")
+        let combinedURL = extractedRootURL.appending(path: "_combined-v8.html")
 
         // If the combined file already exists (from a previous open), reuse it.
         if FileManager.default.fileExists(atPath: combinedURL.path()) {
@@ -228,7 +228,7 @@ enum EPUBCombiner {
                 /* Honor device safe areas (notch / home indicator) since the reader
                    runs full-screen with no chrome. Side margins stay small but scale
                    gently with width (4vw) so the text reflows to fill the screen. */
-                padding-top: max(2.5rem, env(safe-area-inset-top)) !important;
+                padding-top: max(0.75rem, env(safe-area-inset-top)) !important;
                 padding-bottom: max(6rem, env(safe-area-inset-bottom)) !important;
                 padding-left: max(env(safe-area-inset-left), 24px, 4vw) !important;
                 padding-right: max(env(safe-area-inset-right), 24px, 4vw) !important;

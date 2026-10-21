@@ -4,7 +4,6 @@ import SwiftUI
 /// keyboard shortcuts, and Space / Shift+Space paging.
 struct ReaderScaffold<Engine: ReaderEngine, Content: View>: View {
     let session: ReaderSession<Engine>
-    let title: String
     /// Reading progress (0–1) shown on the scrubber.
     let progress: Double?
     @ViewBuilder let content: Content
@@ -23,28 +22,27 @@ struct ReaderScaffold<Engine: ReaderEngine, Content: View>: View {
                 .padding(.bottom, 16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
 
-            // Top bar. The find bar replaces it while the find bar is open.
-            VStack(spacing: 0) {
+            // Corner controls. The find bar takes over the top while it is open.
+            // One hover region covers the hot corner and the buttons, so moving
+            // between them can't momentarily count as leaving.
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                    .frame(width: 64, height: 64)
+
                 if session.isChromeVisible && !session.isSearchVisible {
-                    ReaderTopBar(session: session, title: title) { dismiss() }
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                    ReaderCornerControls(session: session) { dismiss() }
+                        .transition(.opacity)
                 }
-
-                Spacer(minLength: 0)
-                    .allowsHitTesting(false)
             }
-
-            // Pointer users: moving to the top edge reveals the bars.
-            Color.clear
-                .frame(height: 24)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .contentShape(Rectangle())
-                .onHover { hovering in
-                    guard hovering, !session.isChromeVisible else { return }
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering {
                     session.setChromeVisible(true)
-                    session.scheduleChromeAutoHide()
+                } else {
+                    session.scheduleChromeAutoHide(after: .seconds(1.5))
                 }
-                .allowsHitTesting(!session.isChromeVisible)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             if session.isSearchVisible {
                 ReaderSearchBar(
@@ -120,9 +118,5 @@ struct ReaderScaffold<Engine: ReaderEngine, Content: View>: View {
             return .handled
         }
         .toolbar(.hidden, for: .navigationBar)
-        .onAppear {
-            // Show the bars briefly on open so they can be discovered.
-            session.scheduleChromeAutoHide(after: .seconds(3))
-        }
     }
 }

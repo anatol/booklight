@@ -295,6 +295,7 @@ final class LibraryModel {
         state.epubChapterIndex = 0
         state.epubChapterPath = nil
         state.epubChapterProgress = 0
+        state.epubChapterOffsetY = 0
         record(state)
     }
 
@@ -324,13 +325,17 @@ final class LibraryModel {
         record(.pdf(bookID: book.id, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY, lastOpenedAt: .now))
     }
 
-    func saveEPUBPosition(for book: Book, chapterIndex: Int, chapterPath: String, chapterProgress: Double, overallProgress: Double) {
+    func saveEPUBPosition(
+        for book: Book, chapterIndex: Int, chapterPath: String, chapterProgress: Double, chapterOffsetY: Double = 0,
+        overallProgress: Double
+    ) {
         record(
             .epub(
                 bookID: book.id,
                 chapterIndex: chapterIndex,
                 chapterPath: chapterPath,
                 chapterProgress: chapterProgress,
+                chapterOffsetY: chapterOffsetY,
                 overallProgress: overallProgress,
                 lastOpenedAt: .now
             ))

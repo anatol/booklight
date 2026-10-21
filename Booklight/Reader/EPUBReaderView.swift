@@ -154,6 +154,7 @@ final class EPUBScrollProxy: ReaderEngine {
         webView?.evaluateJavaScript(
             """
             (function() {
+                if (window.clearHold) window.clearHold();
                 var root = document.documentElement;
                 var maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
                 window.scrollTo(0, maxScroll * \(progress.clampedToUnit));
@@ -233,7 +234,7 @@ struct EPUBBookView: View {
     @State private var session = ReaderSession(engine: EPUBScrollProxy())
 
     var body: some View {
-        ReaderScaffold(session: session, title: book.title, progress: displayedProgress) {
+        ReaderScaffold(session: session, progress: displayedProgress) {
             Group {
                 if let document {
                     EPUBWebView(
@@ -242,6 +243,7 @@ struct EPUBBookView: View {
                         externalScrollToken: syncToken,
                         externalChapterIndex: book.progressState?.epubChapterIndex ?? 0,
                         externalChapterProgress: book.progressState?.epubChapterProgress ?? 0,
+                        externalChapterOffsetY: book.progressState?.epubChapterOffsetY ?? 0,
                         externalOverallProgress: book.progressState?.progress ?? 0,
                         scrollProxy: session.engine,
                         initialFontSizePercent: session.engine.fontSizePercent,
@@ -252,7 +254,7 @@ struct EPUBBookView: View {
                                 session.contentTapped()
                             }
                         }
-                    ) { chapterIndex, chapterProgress, overallProgress in
+                    ) { chapterIndex, chapterProgress, chapterOffsetY, overallProgress in
                         // Clamp values to valid ranges before persisting.
                         let clampedIndex = min(max(chapterIndex, 0), max(document.spine.count - 1, 0))
                         let clampedChapterProgress = chapterProgress.clampedToUnit
@@ -263,6 +265,7 @@ struct EPUBBookView: View {
                             chapterIndex: clampedIndex,
                             chapterPath: document.spine[clampedIndex].href,
                             chapterProgress: clampedChapterProgress,
+                            chapterOffsetY: chapterOffsetY,
                             overallProgress: clampedOverall
                         )
                         // Update title progress only when not searching, so the title
@@ -307,6 +310,7 @@ struct EPUBBookView: View {
                 let storedChapterPath = book.progressState?.epubChapterPath
                 let storedChapterIndex = book.progressState?.epubChapterIndex ?? 0
                 let storedChapterProgress = book.progressState?.epubChapterProgress ?? 0
+                let storedChapterOffsetY = book.progressState?.epubChapterOffsetY ?? 0
 
                 // Resolve the chapter index, preferring path-based lookup for robustness
                 // (handles chapter reordering in updated EPUBs).
@@ -322,7 +326,8 @@ struct EPUBBookView: View {
                 initialScrollTarget = EPUBScrollTarget(
                     overallProgress: storedOverall,
                     chapterIndex: resolvedIndex,
-                    chapterProgress: storedChapterProgress
+                    chapterProgress: storedChapterProgress,
+                    chapterOffsetY: storedChapterOffsetY
                 )
                 isPreparing = false
             }
@@ -343,6 +348,7 @@ private struct EPUBScrollTarget: Equatable {
     var overallProgress: Double
     var chapterIndex: Int
     var chapterProgress: Double
+    var chapterOffsetY: Double = 0
 }
 
 // MARK: - WKWebView wrapper for continuous EPUB scrolling
@@ -353,6 +359,7 @@ private struct EPUBWebView: UIViewRepresentable {
     let externalScrollToken: UUID?
     let externalChapterIndex: Int
     let externalChapterProgress: Double
+    let externalChapterOffsetY: Double
     let externalOverallProgress: Double
     let scrollProxy: EPUBScrollProxy
     /// Initial font size percentage to apply after the document loads.
@@ -360,7 +367,7 @@ private struct EPUBWebView: UIViewRepresentable {
     /// Called when the user clicks/taps on the content area (not text selection).
     let onContentTapped: () -> Void
     /// Called with (chapterIndex, chapterProgress, overallProgress) as the user scrolls.
-    let onProgressChange: (Int, Double, Double) -> Void
+    let onProgressChange: (Int, Double, Double, Double) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -417,6 +424,7 @@ private struct EPUBWebView: UIViewRepresentable {
             token: externalScrollToken,
             chapterIndex: externalChapterIndex,
             chapterProgress: externalChapterProgress,
+            chapterOffsetY: externalChapterOffsetY,
             overallProgress: externalOverallProgress
         )
     }
@@ -442,6 +450,7 @@ private struct EPUBWebView: UIViewRepresentable {
 
                 // Remove all <mark class="search-hl"> elements, restoring original text nodes.
                 clear: function() {
+                    if (window.invalidateTextIndex) window.invalidateTextIndex();
                     document.querySelectorAll('mark.search-hl').forEach(function(mark) {
                         var parent = mark.parentNode;
                         parent.replaceChild(document.createTextNode(mark.textContent), mark);
@@ -504,6 +513,7 @@ private struct EPUBWebView: UIViewRepresentable {
                         node.parentNode.replaceChild(fragment, node);
                     }
 
+                    if (window.invalidateTextIndex) window.invalidateTextIndex();
                     this._matches = matches;
                     // Automatically navigate to the first match.
                     if (matches.length > 0) {
@@ -620,33 +630,148 @@ private struct EPUBWebView: UIViewRepresentable {
         window.currentCenterProgress = null;
         let resizeState = { isResizing: false, resizeTimeout: null };
 
+        // Position inside a chapter is measured by text, not pixels. Pixel heights
+        // change when lazy images load, the font size changes or the window is
+        // resized; the amount of text before a given point never does. That keeps
+        // a saved position pointing at the same words on every reopen and device.
+        const textIndexes = new Map();  // chapter element -> { nodes, starts, total, nodeIndex }
+        window.invalidateTextIndex = () => textIndexes.clear();
+
+        const textIndexFor = (chapter) => {
+          let index = textIndexes.get(chapter);
+          if (index) return index;
+          const nodes = [], starts = [], nodeIndex = new Map();
+          let total = 0;
+          const walker = document.createTreeWalker(chapter, NodeFilter.SHOW_TEXT, {
+            acceptNode: (n) => n.nodeValue.trim().length > 0 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+          });
+          while (walker.nextNode()) {
+            const n = walker.currentNode;
+            nodeIndex.set(n, nodes.length);
+            nodes.push(n);
+            starts.push(total);
+            total += n.nodeValue.length;
+          }
+          index = { nodes: nodes, starts: starts, total: total, nodeIndex: nodeIndex };
+          textIndexes.set(chapter, index);
+          return index;
+        };
+
+        // Viewport rect of the character at `offset` in a text node (trying the
+        // previous characters when that one has no box, e.g. collapsed whitespace).
+        const charRect = (node, offset) => {
+          const range = document.createRange();
+          for (let o = Math.min(offset, node.nodeValue.length - 1); o >= Math.max(offset - 4, 0); o--) {
+            range.setStart(node, o);
+            range.setEnd(node, o + 1);
+            const rect = range.getClientRects()[0];
+            if (rect) return rect;
+          }
+          return null;
+        };
+
+        // The text position at or just above the point (x, y): how many characters
+        // of chapter text precede it, and that character's viewport top. When the
+        // point is over an image or a margin there is no text under it, so the
+        // nearest text *before* it is used and the gap shows up in `top`.
+        const textAnchorAt = (chapter, x, y) => {
+          const index = textIndexFor(chapter);
+          if (!index.total || !document.caretRangeFromPoint) return null;
+          const caret = document.caretRangeFromPoint(x, y);
+          if (!caret || !chapter.contains(caret.startContainer)) return null;
+
+          let node = null;
+          let offset = 0;
+          const container = caret.startContainer;
+          if (container.nodeType === Node.TEXT_NODE && index.nodeIndex.has(container)) {
+            node = container;
+            offset = Math.min(caret.startOffset, container.nodeValue.length - 1);
+          } else {
+            // Last indexed text node that starts before the caret position.
+            let lo = 0, hi = index.nodes.length - 1, found = -1;
+            while (lo <= hi) {
+              const mid = (lo + hi) >> 1;
+              if (caret.comparePoint(index.nodes[mid], 0) < 0) { found = mid; lo = mid + 1; } else { hi = mid - 1; }
+            }
+            if (found < 0) { node = index.nodes[0]; offset = 0; }
+            else { node = index.nodes[found]; offset = node.nodeValue.length - 1; }
+          }
+
+          const rect = charRect(node, offset);
+          return {
+            chars: index.starts[index.nodeIndex.get(node)] + offset,
+            top: rect ? rect.top : null
+          };
+        };
+
         window.computeCenterProgress = () => {
           const centerY = window.innerHeight / 2;
           const chapters = document.querySelectorAll('.epub-chapter');
           let currentChapter = 0;
           let chapterProgress = 0;
+          let offsetY = 0;
           for (let i = chapters.length - 1; i >= 0; i--) {
             const rect = chapters[i].getBoundingClientRect();
             if (rect.top <= centerY) {
               currentChapter = parseInt(chapters[i].dataset.chapterIndex) || 0;
-              const chapterHeight = Math.max(rect.height, 1);
-              chapterProgress = Math.max(0, Math.min(1, (centerY - rect.top) / chapterHeight));
+              const anchor = textAnchorAt(chapters[i], window.innerWidth / 2, centerY);
+              const total = textIndexFor(chapters[i]).total;
+              if (anchor && total > 0) {
+                chapterProgress = anchor.chars / total;
+                // Pixels from the anchored character down to the window center.
+                if (anchor.top !== null) offsetY = centerY - anchor.top;
+              } else {
+                // No text to anchor to: fall back to the pixel fraction.
+                chapterProgress = (centerY - rect.top) / Math.max(rect.height, 1);
+              }
+              chapterProgress = Math.max(0, Math.min(1, chapterProgress));
               break;
             }
           }
-          return { chapterIndex: currentChapter, chapterProgress: chapterProgress };
+          return { chapterIndex: currentChapter, chapterProgress: chapterProgress, offsetY: offsetY };
         };
 
+        // Scrolls so the saved text position is back where it was relative to the
+        // window center. Returns false when the chapter doesn't exist.
         window.restoreCenterProgress = (target) => {
-          if (!target) return;
+          if (!target) return false;
           const chapter = document.getElementById('chapter-' + target.chapterIndex);
-          if (chapter) {
-            const rect = chapter.getBoundingClientRect();
-            const chapterHeight = Math.max(rect.height, 1);
-            const offset = chapterHeight * target.chapterProgress;
-            window.scrollTo(0, window.scrollY + rect.top + offset - window.innerHeight / 2);
+          if (!chapter) return false;
+
+          const index = textIndexFor(chapter);
+          let top = null;
+          let offsetY = target.offsetY || 0;
+          if (index.total > 0) {
+            const char = Math.min(Math.floor(target.chapterProgress * index.total), index.total - 1);
+            let lo = 0, hi = index.starts.length - 1;
+            while (lo < hi) {
+              const mid = (lo + hi + 1) >> 1;
+              if (index.starts[mid] <= char) lo = mid; else hi = mid - 1;
+            }
+            const rect = charRect(index.nodes[lo], char - index.starts[lo]);
+            if (rect) top = rect.top;
           }
+          if (top === null) {
+            const rect = chapter.getBoundingClientRect();
+            top = rect.top + Math.max(rect.height, 1) * target.chapterProgress;
+            offsetY = 0;
+          }
+          window.scrollTo(0, window.scrollY + top + offsetY - window.innerHeight / 2);
+          return true;
         };
+
+        // Lazy images above the restored spot load after the restore and push the
+        // text down. Re-apply the target as they load, until the reader interacts.
+        let holdTarget = null;
+        let holdUntil = 0;
+        window.holdRestore = (target) => { holdTarget = target; holdUntil = Date.now() + 5000; };
+        window.clearHold = () => { holdTarget = null; };
+        document.addEventListener('load', () => {
+          if (holdTarget && Date.now() < holdUntil) window.restoreCenterProgress(holdTarget);
+        }, true);
+        ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach((type) => {
+          window.addEventListener(type, window.clearHold, { passive: true, capture: true });
+        });
 
         const sendProgress = () => {
           if (!window.isReadyForProgress) return;
@@ -664,6 +789,7 @@ private struct EPUBWebView: UIViewRepresentable {
           window.webkit.messageHandlers.readerProgress.postMessage({
             chapterIndex: window.currentCenterProgress.chapterIndex,
             chapterProgress: window.currentCenterProgress.chapterProgress,
+            chapterOffsetY: window.currentCenterProgress.offsetY || 0,
             overallProgress: overallProgress
           });
         };
@@ -714,7 +840,7 @@ private struct EPUBWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var document: EPUBDocument
-        var onProgressChange: (Int, Double, Double) -> Void
+        var onProgressChange: (Int, Double, Double, Double) -> Void
         /// Called when the user clicks/taps on the EPUB content area.
         var onContentTapped: () -> Void
 
@@ -727,10 +853,11 @@ private struct EPUBWebView: UIViewRepresentable {
         private var initialFontSizePercent: Int
         private var appliedExternalScrollToken: UUID?
         private var isDocumentReadyForExternalScroll = false
-        private var pendingExternalScroll: (token: UUID, chapterIndex: Int, chapterProgress: Double, overallProgress: Double)?
+        private var pendingExternalScroll:
+            (token: UUID, chapterIndex: Int, chapterProgress: Double, chapterOffsetY: Double, overallProgress: Double)?
 
         init(
-            document: EPUBDocument, initialFontSizePercent: Int, onProgressChange: @escaping (Int, Double, Double) -> Void,
+            document: EPUBDocument, initialFontSizePercent: Int, onProgressChange: @escaping (Int, Double, Double, Double) -> Void,
             onContentTapped: @escaping () -> Void
         ) {
             self.document = document
@@ -812,28 +939,22 @@ private struct EPUBWebView: UIViewRepresentable {
                 fontSizeJS = ""
             }
 
-            // Always use chapter-based scrolling. It is much more robust against
-            // changes in text size, display area, and partial loading than `overallProgress`,
-            // which can point to arbitrary offsets if layout parameters change.
-            let scrollJS: String
-
-            // Scroll to the chapter element and then offset by chapter progress.
-            scrollJS = """
-                const chapter = document.getElementById('chapter-\(target.chapterIndex)');
-                if (chapter) {
-                    const rect = chapter.getBoundingClientRect();
-                    const chapterHeight = Math.max(rect.height, 1);
-                    const offset = chapterHeight * \(target.chapterProgress.clampedToUnit);
-                    window.scrollTo(0, window.scrollY + rect.top + offset - window.innerHeight / 2);
-                } else {
-                    const root = document.documentElement;
-                    const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
-                    window.scrollTo(0, maxScroll * \(target.overallProgress.clampedToUnit));
-                }
-                window.currentCenterProgress = {
-                    chapterIndex: \(target.chapterIndex),
-                    chapterProgress: \(target.chapterProgress.clampedToUnit)
-                };
+            // Restore by chapter and text position, which stays valid when pixel
+            // layout changes (lazy images, font size, window size); `overallProgress`
+            // is only a fallback for a chapter that no longer exists. The hold keeps
+            // re-applying the position while images above it finish loading.
+            let scrollJS = """
+                (function() {
+                    const target = { chapterIndex: \(target.chapterIndex), chapterProgress: \(target.chapterProgress.clampedToUnit), offsetY: \(target.chapterOffsetY) };
+                    if (window.restoreCenterProgress(target)) {
+                        window.holdRestore(target);
+                        window.currentCenterProgress = target;
+                    } else {
+                        const root = document.documentElement;
+                        const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
+                        window.scrollTo(0, maxScroll * \(target.overallProgress.clampedToUnit));
+                    }
+                })();
                 """
 
             // Apply font size first, then scroll after reflow completes.
@@ -846,6 +967,7 @@ private struct EPUBWebView: UIViewRepresentable {
                             token: pending.token,
                             chapterIndex: pending.chapterIndex,
                             chapterProgress: pending.chapterProgress,
+                            chapterOffsetY: pending.chapterOffsetY,
                             overallProgress: pending.overallProgress
                         )
                     }
@@ -863,6 +985,7 @@ private struct EPUBWebView: UIViewRepresentable {
                             token: pending.token,
                             chapterIndex: pending.chapterIndex,
                             chapterProgress: pending.chapterProgress,
+                            chapterOffsetY: pending.chapterOffsetY,
                             overallProgress: pending.overallProgress
                         )
                     }
@@ -870,41 +993,42 @@ private struct EPUBWebView: UIViewRepresentable {
             }
         }
 
-        func applyExternalScrollIfNeeded(token: UUID?, chapterIndex: Int, chapterProgress: Double, overallProgress: Double) {
+        func applyExternalScrollIfNeeded(
+            token: UUID?, chapterIndex: Int, chapterProgress: Double, chapterOffsetY: Double, overallProgress: Double
+        ) {
             guard let token, token != appliedExternalScrollToken else { return }
-            pendingExternalScroll = (token, chapterIndex, chapterProgress, overallProgress)
+            pendingExternalScroll = (token, chapterIndex, chapterProgress, chapterOffsetY, overallProgress)
             guard isDocumentReadyForExternalScroll else { return }
             applyExternalScroll(
                 token: token,
                 chapterIndex: chapterIndex,
                 chapterProgress: chapterProgress,
+                chapterOffsetY: chapterOffsetY,
                 overallProgress: overallProgress
             )
         }
 
-        private func applyExternalScroll(token: UUID, chapterIndex: Int, chapterProgress: Double, overallProgress: Double) {
+        private func applyExternalScroll(
+            token: UUID, chapterIndex: Int, chapterProgress: Double, chapterOffsetY: Double, overallProgress: Double
+        ) {
             guard let webView else { return }
             guard token != appliedExternalScrollToken else { return }
             appliedExternalScrollToken = token
             let safeProgress = chapterProgress.clampedToUnit
             let safeOverall = overallProgress.clampedToUnit
             let js = """
-                const chapter = document.getElementById('chapter-\(chapterIndex)');
-                if (chapter) {
-                    const rect = chapter.getBoundingClientRect();
-                    const chapterHeight = Math.max(rect.height, 1);
-                    const offset = chapterHeight * \(safeProgress);
-                    window.scrollTo(0, window.scrollY + rect.top + offset - window.innerHeight / 2);
-                } else {
-                    const root = document.documentElement;
-                    const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
-                    window.scrollTo(0, maxScroll * \(safeOverall));
-                }
-                window.currentCenterProgress = {
-                    chapterIndex: \(chapterIndex),
-                    chapterProgress: \(safeProgress)
-                };
-                sendProgress();
+                (function() {
+                    const target = { chapterIndex: \(chapterIndex), chapterProgress: \(safeProgress), offsetY: \(chapterOffsetY) };
+                    if (window.restoreCenterProgress(target)) {
+                        window.holdRestore(target);
+                        window.currentCenterProgress = target;
+                    } else {
+                        const root = document.documentElement;
+                        const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
+                        window.scrollTo(0, maxScroll * \(safeOverall));
+                    }
+                    sendProgress();
+                })();
                 """
             webView.evaluateJavaScript(js)
             pendingExternalScroll = nil
@@ -932,6 +1056,7 @@ private struct EPUBWebView: UIViewRepresentable {
             onProgressChange(
                 chapterIndex,
                 chapterProgress.clampedToUnit,
+                body["chapterOffsetY"] as? Double ?? 0,
                 overallProgress.clampedToUnit
             )
         }

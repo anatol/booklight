@@ -39,6 +39,10 @@ struct BookProgressState: Codable, Hashable, Sendable {
     var epubChapterIndex: Int?
     var epubChapterPath: String?
     var epubChapterProgress: Double?
+    /// Pixels from the anchored text position down to the window center when the
+    /// position was saved. Nonzero when the center rested on an image or margin
+    /// rather than on text, so the same view can be restored.
+    var epubChapterOffsetY: Double?
     /// Per-book font size preference for EPUB reading, as a percentage (100 = default).
     /// nil means use the default size (100%).
     var epubFontSizePercent: Int?
@@ -61,6 +65,7 @@ struct BookProgressState: Codable, Hashable, Sendable {
         case epubChapterIndex
         case epubChapterPath
         case epubChapterProgress
+        case epubChapterOffsetY
         case epubFontSizePercent
     }
 
@@ -76,6 +81,7 @@ struct BookProgressState: Codable, Hashable, Sendable {
         epubChapterIndex: Int?,
         epubChapterPath: String?,
         epubChapterProgress: Double?,
+        epubChapterOffsetY: Double? = nil,
         epubFontSizePercent: Int? = nil
     ) {
         self.schemaVersion = schemaVersion
@@ -89,6 +95,7 @@ struct BookProgressState: Codable, Hashable, Sendable {
         self.epubChapterIndex = epubChapterIndex
         self.epubChapterPath = epubChapterPath
         self.epubChapterProgress = epubChapterProgress
+        self.epubChapterOffsetY = epubChapterOffsetY
         self.epubFontSizePercent = epubFontSizePercent
     }
 
@@ -105,6 +112,7 @@ struct BookProgressState: Codable, Hashable, Sendable {
         epubChapterIndex = try container.decodeIfPresent(Int.self, forKey: .epubChapterIndex)
         epubChapterPath = try container.decodeIfPresent(String.self, forKey: .epubChapterPath)
         epubChapterProgress = try container.decodeIfPresent(Double.self, forKey: .epubChapterProgress)
+        epubChapterOffsetY = try container.decodeIfPresent(Double.self, forKey: .epubChapterOffsetY)
         epubFontSizePercent = try container.decodeIfPresent(Int.self, forKey: .epubFontSizePercent)
         // Intentionally ignore legacy persisted `isFinished`; completion is position-derived.
         _ = try container.decodeIfPresent(Bool.self, forKey: .isFinished)
@@ -123,6 +131,7 @@ struct BookProgressState: Codable, Hashable, Sendable {
         try container.encodeIfPresent(epubChapterIndex, forKey: .epubChapterIndex)
         try container.encodeIfPresent(epubChapterPath, forKey: .epubChapterPath)
         try container.encodeIfPresent(epubChapterProgress, forKey: .epubChapterProgress)
+        try container.encodeIfPresent(epubChapterOffsetY, forKey: .epubChapterOffsetY)
         try container.encodeIfPresent(epubFontSizePercent, forKey: .epubFontSizePercent)
     }
 
@@ -275,6 +284,7 @@ extension BookProgressState {
         chapterIndex: Int,
         chapterPath: String,
         chapterProgress: Double,
+        chapterOffsetY: Double = 0,
         overallProgress: Double,
         lastOpenedAt: Date,
         fontSizePercent: Int? = nil
@@ -289,6 +299,7 @@ extension BookProgressState {
             epubChapterIndex: max(chapterIndex, 0),
             epubChapterPath: chapterPath,
             epubChapterProgress: chapterProgress.clampedToUnit,
+            epubChapterOffsetY: chapterOffsetY,
             epubFontSizePercent: fontSizePercent
         ).normalized()
     }

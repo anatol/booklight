@@ -61,8 +61,9 @@ final class ReaderSession<Engine: ReaderEngine> {
     let engine: Engine
     var isSearchVisible = false
     var searchText = ""
-    /// Whether the touch-friendly top and bottom bars are showing.
-    var isChromeVisible = true
+    /// Whether the corner controls are showing. Hidden by default so the page
+    /// has the whole window.
+    var isChromeVisible = false
     @ObservationIgnored private var chromeHideTask: Task<Void, Never>?
 
     init(engine: Engine) {
@@ -81,6 +82,7 @@ final class ReaderSession<Engine: ReaderEngine> {
             confirmSearchPosition()
         } else {
             setChromeVisible(!isChromeVisible)
+            if isChromeVisible { scheduleChromeAutoHide() }
         }
     }
 

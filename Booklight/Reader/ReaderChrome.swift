@@ -1,70 +1,65 @@
 import SwiftUI
 
-/// The bars drawn over a reader. They make every reader function reachable by
-/// touch (the keyboard shortcuts only help on a Mac or iPad with a keyboard),
-/// and show reading progress, which is otherwise only in the Mac title bar.
-struct ReaderTopBar<Engine: ReaderEngine>: View {
+/// A small stack of round buttons in the top-left corner: back to the library,
+/// find, and (for reflowable books) text size. It stays out of the way: it only
+/// appears when the pointer visits the corner or the page is tapped, never because
+/// the book scrolled, and it takes no space from the text.
+struct ReaderCornerControls<Engine: ReaderEngine>: View {
     let session: ReaderSession<Engine>
-    let title: String
     let onBack: () -> Void
 
     var body: some View {
         let engine = session.engine
-        HStack(spacing: 4) {
+        VStack(spacing: 10) {
             Button(action: onBack) {
-                Label("Library", systemImage: "chevron.left")
-                    .labelStyle(.titleAndIcon)
-                    .font(.body.weight(.semibold))
+                RoundGlyph(systemName: "chevron.left")
             }
             .accessibilityLabel("Back to library")
-
-            Spacer(minLength: 12)
-
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: 420)
-
-            Spacer(minLength: 12)
-
-            if engine.supportsTextSize {
-                Button {
-                    engine.decreaseTextSize()
-                } label: {
-                    Image(systemName: "textformat.size.smaller")
-                }
-                .accessibilityLabel("Smaller text")
-
-                if let percent = engine.textSizePercent {
-                    Text("\(percent)%")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(minWidth: 40)
-                }
-
-                Button {
-                    engine.increaseTextSize()
-                } label: {
-                    Image(systemName: "textformat.size.larger")
-                }
-                .accessibilityLabel("Larger text")
-            }
 
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     session.openSearch()
                 }
             } label: {
-                Image(systemName: "magnifyingglass")
+                RoundGlyph(systemName: "magnifyingglass")
             }
             .accessibilityLabel("Find in book")
+
+            if engine.supportsTextSize {
+                Menu {
+                    Button("Larger Text", systemImage: "textformat.size.larger") {
+                        engine.increaseTextSize()
+                    }
+                    Button("Smaller Text", systemImage: "textformat.size.smaller") {
+                        engine.decreaseTextSize()
+                    }
+                    if let percent = engine.textSizePercent {
+                        Text("Text size \(percent)%")
+                    }
+                } label: {
+                    RoundGlyph(systemName: "textformat.size")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Text size")
+            }
         }
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.regularMaterial)
-        .overlay(alignment: .bottom) { Divider() }
+        .buttonStyle(.plain)
+        .padding(12)
+    }
+}
+
+/// The round material button face shared by the corner controls.
+private struct RoundGlyph: View {
+    let systemName: String
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(.primary)
+            .frame(width: 36, height: 36)
+            .background(.regularMaterial, in: Circle())
+            .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
     }
 }
 

@@ -259,7 +259,7 @@ struct PDFBookView: View {
     @State private var session = ReaderSession(engine: PDFScrollProxy())
 
     var body: some View {
-        ReaderScaffold(session: session, title: book.title, progress: displayedProgress) {
+        ReaderScaffold(session: session, progress: displayedProgress) {
             PDFReaderRepresentable(
                 documentURL: bookURL,
                 initialPageIndex: book.progressState?.pdfPageIndex ?? 0,

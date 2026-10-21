@@ -26,7 +26,18 @@ final class LibraryModel {
     /// Identifies the latest refresh so a superseded one can't publish stale
     /// results or clear the newer one's loading state.
     @ObservationIgnored private var refreshGeneration = 0
-    @ObservationIgnored private var pollTask: Task<Void, Never>?
+    /// Local-library files from the last full scan, reused by tracking-only
+    /// refreshes so a progress change doesn't re-walk large collections.
+    @ObservationIgnored private var libraryFiles: [ScannedFile] = []
+    @ObservationIgnored private var hasCompletedFullScan = false
+    /// A refresh requested while another was running; replayed when it finishes
+    /// so change notifications that arrive mid-scan aren't lost.
+    @ObservationIgnored private var queuedRefreshScope: RefreshScope?
+    /// Watches books/ and progress/ for changes from other devices.
+    @ObservationIgnored private var trackingMonitor: DirectoryMonitor?
+    /// Safety net for folders whose provider doesn't deliver change events.
+    @ObservationIgnored private var fallbackPollTask: Task<Void, Never>?
+    private static let fallbackPollInterval: Duration = .seconds(60)
 
     init() {
         folders = FolderAccess()
@@ -37,12 +48,12 @@ final class LibraryModel {
         if trackingDirectoryURL != nil {
             refresh(silently: false)
         }
-        startPolling()
+        startFallbackPolling()
     }
 
     deinit {
         refreshTask?.cancel()
-        pollTask?.cancel()
+        fallbackPollTask?.cancel()
     }
 
     func book(withID bookID: String) -> Book? {
@@ -85,6 +96,9 @@ final class LibraryModel {
             Task { try? await previous.flush() }
         }
 
+        trackingMonitor?.cancel()
+        trackingMonitor = nil
+
         guard let trackingDirectoryURL else {
             progressStore = nil
             shelf = nil
@@ -92,6 +106,7 @@ final class LibraryModel {
         }
 
         let layout = TrackingLayout(root: trackingDirectoryURL)
+        startMonitoring(layout)
         progressStore = ProgressStore(layout: layout) { [weak self] error in
             self?.errorMessage = error.localizedDescription
         }
@@ -100,14 +115,33 @@ final class LibraryModel {
 
     // MARK: - Scanning
 
-    /// Rescans all folders. A refresh already in flight is left alone unless
-    /// `restart` is set (used when the folder configuration changed).
-    func refresh(silently: Bool = false, restart: Bool = false) {
+    enum RefreshScope {
+        /// Rescan the tracking directory and every local library.
+        case full
+        /// Rescan only the tracking directory (books/ and progress/), reusing
+        /// the local-library files from the last full scan.
+        case trackingDirectory
+    }
+
+    /// Rescans folders. A refresh already in flight is left alone unless
+    /// `restart` is set (used when the folder configuration changed). A
+    /// tracking-only request falls back to a full scan until one has completed.
+    func refresh(silently: Bool = false, restart: Bool = false, scope: RefreshScope = .full) {
         guard let trackingDirectoryURL, let progressStore else { return }
         if refreshTask != nil {
-            guard restart else { return }
+            guard restart else {
+                queuedRefreshScope = (queuedRefreshScope == .full || scope == .full) ? .full : .trackingDirectory
+                return
+            }
             refreshTask?.cancel()
         }
+        queuedRefreshScope = nil
+
+        if scope == .full || trackingMonitor?.isValid == false {
+            // Recreate the watcher in case the watched folders were replaced.
+            startMonitoring(TrackingLayout(root: trackingDirectoryURL))
+        }
+        let scansLibraries = scope == .full || !hasCompletedFullScan
 
         if !silently {
             isLoading = true
@@ -120,25 +154,49 @@ final class LibraryModel {
 
         refreshTask = Task { [weak self, scanner] in
             defer {
-                if self?.refreshGeneration == generation {
-                    self?.refreshTask = nil
-                    self?.isLoading = false
+                if let self, self.refreshGeneration == generation {
+                    self.refreshTask = nil
+                    self.isLoading = false
+                    if let queued = self.queuedRefreshScope {
+                        self.refresh(silently: true, scope: queued)
+                    }
                 }
             }
 
             do {
+                try FileManager.default.createDirectory(at: layout.booksDirectory, withIntermediateDirectories: true)
                 let states = try await progressStore.loadAll()
-                let scanned = try await scanner.scan(layout: layout, localLibraries: localLibraries, progressStates: states)
+                let trackingFiles = try await scanner.scan(directories: [layout.booksDirectory])
+                let libraryFiles: [ScannedFile]
+                if scansLibraries {
+                    libraryFiles = try await scanner.scan(directories: localLibraries)
+                } else {
+                    libraryFiles = self?.libraryFiles ?? []
+                }
+                let scanned = LibraryScanner.composeBooks(
+                    trackingFiles: trackingFiles,
+                    libraryFiles: libraryFiles,
+                    progressStates: states
+                )
                 let pending = await progressStore.pendingStates()
 
                 guard let self, !Task.isCancelled, self.refreshGeneration == generation else { return }
+                if scansLibraries {
+                    self.libraryFiles = libraryFiles
+                    self.hasCompletedFullScan = true
+                }
                 // The scan only sees what's on disk; re-apply debounced writes
                 // that haven't landed yet so in-memory progress doesn't jump back.
-                self.books = scanned.map { book in
+                let refreshed = scanned.map { book in
                     guard let pendingState = pending[book.id] else { return book }
                     var updated = book
                     updated.progressState = ProgressStore.mergeStates(local: pendingState, remote: book.progressState)
                     return updated
+                }
+                // Observation notifies on every assignment; skip no-op refreshes so
+                // views don't re-render when nothing changed.
+                if refreshed != self.books {
+                    self.books = refreshed
                 }
                 self.errorMessage = nil
             } catch {
@@ -148,12 +206,23 @@ final class LibraryModel {
         }
     }
 
-    private func startPolling() {
-        pollTask = Task { [weak self] in
+    private func startMonitoring(_ layout: TrackingLayout) {
+        let fileManager = FileManager.default
+        try? fileManager.createDirectory(at: layout.booksDirectory, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: layout.progressDirectory, withIntermediateDirectories: true)
+
+        trackingMonitor?.cancel()
+        trackingMonitor = DirectoryMonitor(directories: [layout.booksDirectory, layout.progressDirectory]) { [weak self] in
+            self?.refresh(silently: true, scope: .trackingDirectory)
+        }
+    }
+
+    private func startFallbackPolling() {
+        fallbackPollTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: Self.fallbackPollInterval)
                 guard !Task.isCancelled else { return }
-                self?.refresh(silently: true)
+                self?.refresh(silently: true, scope: .trackingDirectory)
             }
         }
     }

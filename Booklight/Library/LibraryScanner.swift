@@ -1,7 +1,16 @@
 import CryptoKit
 import Foundation
 
-/// Discovers books in the tracking directory and local libraries.
+/// A book file found on disk, identified by its content hash.
+struct ScannedFile: Hashable, Sendable {
+    var id: String
+    var fileURL: URL
+    var format: BookFormat
+    var fileSize: Int64
+    var modifiedAt: Date
+}
+
+/// Discovers book files in the tracking directory and local libraries.
 ///
 /// Books are identified by the SHA-256 of their contents so the same file in
 /// several folders (or on several devices) maps to one progress record. Hashes
@@ -14,16 +23,15 @@ actor LibraryScanner {
         self.cacheFileURL = cacheDirectory.appending(path: "hashes.json")
     }
 
-    /// Scans the tracking directory first so a book that has an active copy
-    /// resolves to that copy rather than to its local-library original.
-    func scan(layout: TrackingLayout, localLibraries: [URL], progressStates: [String: BookProgressState]) throws -> [Book] {
+    /// Returns every PDF/EPUB under `directories`, deduplicated by content (the
+    /// first directory wins). Cache records for files that disappeared from the
+    /// scanned directories are pruned; records for other directories are kept so
+    /// a tracking-only scan doesn't evict the local libraries' hashes.
+    func scan(directories: [URL]) throws -> [ScannedFile] {
         let fileManager = FileManager.default
-        try fileManager.createDirectory(at: layout.booksDirectory, withIntermediateDirectories: true)
-
         var hashCache = loadHashCache()
         var seenCachePaths = Set<String>()
-        seenCachePaths.reserveCapacity(hashCache.records.count)
-        var generatedBooks: [Book] = []
+        var files: [ScannedFile] = []
         var seenHashes = Set<String>()
         var cacheUpdated = false
         var completedScan = false
@@ -35,24 +43,27 @@ actor LibraryScanner {
         }
 
         defer {
-            // Only prune after a full scan; a cancelled scan hasn't seen every file.
+            // Only prune after a full pass; a cancelled scan hasn't seen every file.
             if completedScan {
+                let scannedPrefixes = directories.map { Self.directoryPrefix(for: $0) }
                 for path in Array(hashCache.records.keys) where !seenCachePaths.contains(path) {
-                    hashCache.records.removeValue(forKey: path)
-                    cacheUpdated = true
+                    if scannedPrefixes.contains(where: { path.hasPrefix($0) }) {
+                        hashCache.records.removeValue(forKey: path)
+                        cacheUpdated = true
+                    }
                 }
             }
             saveCacheIfNeeded()
         }
 
-        func processDirectory(at url: URL) throws {
+        for directory in directories {
             guard
                 let enumerator = fileManager.enumerator(
-                    at: url,
+                    at: directory,
                     includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
                     options: [.skipsHiddenFiles, .skipsPackageDescendants]
                 )
-            else { return }
+            else { continue }
 
             for case let fileURL as URL in enumerator {
                 try Task.checkCancellation()
@@ -85,32 +96,48 @@ actor LibraryScanner {
                 }
 
                 guard seenHashes.insert(hash).inserted else { continue }
-
-                generatedBooks.append(
-                    Book(
-                        id: hash,
-                        title: fileURL.deletingPathExtension().lastPathComponent,
-                        fileURL: fileURL,
-                        format: format,
-                        fileSize: fileSize,
-                        addedAt: modifiedAt,
-                        modifiedAt: modifiedAt,
-                        progressState: progressStates[hash]
-                    )
-                )
+                files.append(ScannedFile(id: hash, fileURL: fileURL, format: format, fileSize: fileSize, modifiedAt: modifiedAt))
             }
 
             saveCacheIfNeeded()
         }
 
-        try processDirectory(at: layout.booksDirectory)
-        for library in localLibraries {
-            try processDirectory(at: library)
-        }
-
         completedScan = true
-        generatedBooks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-        return generatedBooks
+        return files
+    }
+
+    /// Builds the library from the tracking directory's files and the local
+    /// libraries' files. Tracking files come first so a book with an active copy
+    /// resolves to that copy rather than to its local-library original.
+    static func composeBooks(
+        trackingFiles: [ScannedFile],
+        libraryFiles: [ScannedFile],
+        progressStates: [String: BookProgressState]
+    ) -> [Book] {
+        var seen = Set<String>()
+        var books: [Book] = []
+        for file in trackingFiles + libraryFiles where seen.insert(file.id).inserted {
+            books.append(
+                Book(
+                    id: file.id,
+                    title: file.fileURL.deletingPathExtension().lastPathComponent,
+                    fileURL: file.fileURL,
+                    format: file.format,
+                    fileSize: file.fileSize,
+                    addedAt: file.modifiedAt,
+                    modifiedAt: file.modifiedAt,
+                    progressState: progressStates[file.id]
+                )
+            )
+        }
+        books.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        return books
+    }
+
+    /// Cache keys are `URL.path()` strings, so match them against the same form.
+    private static func directoryPrefix(for directory: URL) -> String {
+        let path = directory.path()
+        return path.hasSuffix("/") ? path : path + "/"
     }
 
     private func loadHashCache() -> FileHashCache {

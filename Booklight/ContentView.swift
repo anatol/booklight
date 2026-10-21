@@ -8,6 +8,17 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var isPickingTrackingDirectory = false
     @State private var isPickingLocalLibrary = false
+    /// IDs of the books pushed on the navigation stack. Books are identified by
+    /// ID rather than by value: a `Book` changes (and re-hashes) on every progress
+    /// update, which would invalidate the navigation destination while reading.
+    @State private var path: [String] = []
+    @State private var hasRestoredOpenBook = false
+    /// The book left open when the app last ran. Plain UserDefaults rather than
+    /// SceneStorage, which did not survive a quit and relaunch on Mac Catalyst.
+    private static let lastOpenBookKey = "Booklight.lastOpenBookID"
+    /// Only the first window opened in a launch restores the book, so extra
+    /// windows (File > New Window) start at the library.
+    @MainActor private static var launchRestoreClaimed = false
     /// Title of the open reader, if any; keeps the window title on the book
     /// while the library view underneath re-renders.
     @State private var readerTitle: String?
@@ -19,7 +30,7 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             // Wrapped in a child view so it can read @Environment(\.isSearching)
             // and clear the search text when the user cancels/dismisses search.
             LibraryContentView(
@@ -32,9 +43,15 @@ struct ContentView: View {
             )
             .navigationTitle(readerTitle ?? Self.windowTitle(for: library.trackingDirectoryURL))
             .navigationBarTitleDisplayMode(.inline)
+            // The window title bar already shows the title; drawing it again in the
+            // toolbar crowds out the search field.
+            .toolbar(removing: .title)
             .toolbar {
+                // An empty principal item keeps the toolbar in its centered layout;
+                // without any principal content SwiftUI collapses the search field
+                // into a magnifier button even though there is plenty of room.
                 ToolbarItem(placement: .principal) {
-                    LibraryTitleView(libraryURL: library.trackingDirectoryURL)
+                    Color.clear.frame(width: 1, height: 1)
                 }
 
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -119,6 +136,37 @@ struct ContentView: View {
             flushProgressInBackground()
         }
         .searchable(text: $browser.searchText, prompt: "Search by title")
+        .onChange(of: library.hasLoadedOnce, initial: true) {
+            restoreOpenBookIfNeeded()
+        }
+        .onChange(of: path) {
+            UserDefaults.standard.set(path.last ?? "", forKey: Self.lastOpenBookKey)
+        }
+    }
+
+    /// Re-opens the book that was open when the window last closed, once the
+    /// first scan has finished and we know the book still exists.
+    private func restoreOpenBookIfNeeded() {
+        guard library.hasLoadedOnce, !hasRestoredOpenBook else { return }
+        hasRestoredOpenBook = true
+        guard !Self.launchRestoreClaimed else { return }
+        Self.launchRestoreClaimed = true
+
+        #if DEBUG
+            // Test hook: `-BooklightOpenBook <title substring>` opens that book at launch.
+            if let title = UserDefaults.standard.string(forKey: "BooklightOpenBook"),
+                let book = library.books.first(where: { $0.title.localizedCaseInsensitiveContains(title) })
+            {
+                path = [book.id]
+                return
+            }
+        #endif
+
+        if let storedID = UserDefaults.standard.string(forKey: Self.lastOpenBookKey),
+            !storedID.isEmpty, library.book(withID: storedID) != nil
+        {
+            path = [storedID]
+        }
     }
 
     /// Writes queued progress before the app is suspended. The background task
@@ -244,8 +292,8 @@ private struct LibraryContentView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 22)
         }
-        .navigationDestination(for: Book.self) { book in
-            ReaderContainerView(library: library, bookID: book.id, readerTitle: $readerTitle)
+        .navigationDestination(for: String.self) { bookID in
+            ReaderContainerView(library: library, bookID: bookID, readerTitle: $readerTitle)
         }
         .background(Color(uiColor: .systemGroupedBackground))
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -297,18 +345,6 @@ private struct ProblemBanner: View {
     }
 }
 
-private struct LibraryTitleView: View {
-    let libraryURL: URL?
-
-    var body: some View {
-        HStack(spacing: 10) {
-            BooklightIconView(size: 28)
-                .frame(width: 28, height: 28)
-        }
-        .frame(maxWidth: 320)
-    }
-}
-
 private struct BookGallerySection: View {
     let title: String
     let books: [Book]
@@ -346,7 +382,7 @@ private struct BookGallerySection: View {
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
                 ForEach(books) { book in
-                    NavigationLink(value: book) {
+                    NavigationLink(value: book.id) {
                         BookCard(book: book, fileURL: book.fileURL)
                     }
                     .buttonStyle(.plain)
@@ -619,3 +655,4 @@ struct SettingsView: View {
         }
     }
 }
+

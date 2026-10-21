@@ -452,7 +452,9 @@ struct PDFReaderRepresentable: UIViewRepresentable {
             lastSentPageIndex = nil
             lastSentOffsetY = nil
             scrollDebounceTimer?.invalidate()
-            pdfView.document = PDFDocument(url: documentURL)
+            let document = PDFDocument(url: documentURL)
+            if let document { Self.trimSideMargins(of: document) }
+            pdfView.document = document
 
             // Remove old observers.
             if let pageChangedObserver {
@@ -509,6 +511,53 @@ struct PDFReaderRepresentable: UIViewRepresentable {
                     }
                 }
                 self.emitPosition()
+            }
+        }
+
+        /// Many books (e.g. typeset textbooks) have wide blank margins baked into
+        /// every page, which wastes width because the view scales pages to fit.
+        /// Crops all pages horizontally to the text area. Sampling pages and using
+        /// one shared inset (as a fraction of page width) keeps the text size
+        /// consistent from page to page. Vertical extent is left untouched so
+        /// saved reading positions stay valid.
+        static func trimSideMargins(of document: PDFDocument) {
+            let count = document.pageCount
+            guard count > 0 else { return }
+            let sampleCount = min(count, 40)
+            var minLeft = CGFloat.greatestFiniteMagnitude
+            var minRight = CGFloat.greatestFiniteMagnitude
+            var sampled = 0
+            for i in 0..<sampleCount {
+                let index = i * count / sampleCount
+                guard let page = document.page(at: index), page.rotation == 0 else { continue }
+                let box = page.bounds(for: .mediaBox)
+                guard box.width > 0,
+                    let text = page.selection(for: box),
+                    !(text.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                else { continue }
+                let textBounds = text.bounds(for: page)
+                guard !textBounds.isEmpty else { continue }
+                minLeft = min(minLeft, (textBounds.minX - box.minX) / box.width)
+                minRight = min(minRight, (box.maxX - textBounds.maxX) / box.width)
+                sampled += 1
+            }
+            guard sampled > 0 else { return }
+
+            // Keep a little breathing room around the text.
+            let padding: CGFloat = 0.02
+            let left = max(minLeft - padding, 0)
+            let right = max(minRight - padding, 0)
+            // Not worth altering the document for a barely visible gain.
+            guard left + right > 0.05 else { return }
+
+            for index in 0..<count {
+                guard let page = document.page(at: index), page.rotation == 0 else { continue }
+                let box = page.bounds(for: .mediaBox)
+                page.setBounds(
+                    CGRect(
+                        x: box.minX + box.width * left, y: box.minY,
+                        width: box.width * (1 - left - right), height: box.height),
+                    for: .cropBox)
             }
         }
 

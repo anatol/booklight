@@ -363,6 +363,9 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
         pdfView.displaysPageBreaks = true
+        // PDFKit's default page-break margins leave grey strips left and right of
+        // the page; keep only a small gap between pages.
+        pdfView.pageBreakMargins = UIEdgeInsets(top: 0, left: 0, bottom: 8, right: 0)
         pdfView.backgroundColor = .secondarySystemBackground
         // The reader's own scrubber replaces the system scroll indicator. PDFView
         // creates its scroll view lazily, so look again once it has been laid out.

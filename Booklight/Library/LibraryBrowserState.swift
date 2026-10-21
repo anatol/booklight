@@ -22,6 +22,10 @@ final class LibraryBrowserState {
     private static let sortKey = "Booklight.otherBooksSort"
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var searchDebounceTask: Task<Void, Never>?
+    /// Last computed sections and their inputs. The library view re-renders for
+    /// many reasons that don't affect filtering (loading state, alerts, …), so
+    /// recompute only when the books, query or sort actually changed.
+    @ObservationIgnored private var cachedSections: (books: [Book], query: String, sort: LibrarySortOption, result: LibrarySearch.Sections)?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -31,7 +35,14 @@ final class LibraryBrowserState {
     }
 
     func sections(of books: [Book]) -> LibrarySearch.Sections {
-        LibrarySearch.sections(of: books, query: debouncedSearchText, sort: sort)
+        let query = debouncedSearchText
+        let sort = self.sort
+        if let cached = cachedSections, cached.query == query, cached.sort == sort, cached.books == books {
+            return cached.result
+        }
+        let result = LibrarySearch.sections(of: books, query: query, sort: sort)
+        cachedSections = (books, query, sort, result)
+        return result
     }
 
     private func scheduleSearchDebounce() {

@@ -56,7 +56,7 @@ enum LibrarySearch {
         if normalizedQuery.isEmpty {
             visible = books
         } else {
-            visible = books.filter { fuzzyScore(query: normalizedQuery, candidate: $0.title) != nil }
+            visible = books.filter { fuzzyScore(query: normalizedQuery, searchKey: $0.searchKey) != nil }
         }
 
         return Sections(
@@ -66,10 +66,7 @@ enum LibrarySearch {
     }
 
     static func sortActiveBooks(_ books: [Book], query: String = "") -> [Book] {
-        let normalizedQuery = normalized(query)
-        func score(_ book: Book) -> Int {
-            normalizedQuery.isEmpty ? 0 : fuzzyScore(query: normalizedQuery, candidate: book.title) ?? 0
-        }
+        let scores = relevanceScores(for: books, query: query)
 
         return books.sorted {
             let leftUnread = $0.isUnreadLike
@@ -77,19 +74,19 @@ enum LibrarySearch {
             if leftUnread != rightUnread {
                 return !leftUnread && rightUnread
             }
-            return ($0.lastOpenedAt ?? .distantPast, score($0), $0.title.localizedLowercase) > (
-                $1.lastOpenedAt ?? .distantPast, score($1), $1.title.localizedLowercase
+            return ($0.lastOpenedAt ?? .distantPast, scores?[$0.id] ?? 0, $0.title.localizedLowercase) > (
+                $1.lastOpenedAt ?? .distantPast, scores?[$1.id] ?? 0, $1.title.localizedLowercase
             )
         }
     }
 
     static func sortOtherBooks(_ books: [Book], using option: LibrarySortOption, query: String = "") -> [Book] {
-        let normalizedQuery = normalized(query)
+        let scores = relevanceScores(for: books, query: query)
 
         return books.sorted { left, right in
-            if !normalizedQuery.isEmpty {
-                let leftScore = fuzzyScore(query: normalizedQuery, candidate: left.title) ?? Int.min
-                let rightScore = fuzzyScore(query: normalizedQuery, candidate: right.title) ?? Int.min
+            if let scores {
+                let leftScore = scores[left.id] ?? Int.min
+                let rightScore = scores[right.id] ?? Int.min
                 if leftScore != rightScore {
                     return leftScore > rightScore
                 }
@@ -97,6 +94,19 @@ enum LibrarySearch {
 
             return compareOtherBooks(left, right, using: option)
         }
+    }
+
+    /// Scores each book once up front (nil when there is no query) so sort
+    /// comparators don't re-run the matcher O(n log n) times.
+    private static func relevanceScores(for books: [Book], query: String) -> [String: Int]? {
+        let normalizedQuery = normalized(query)
+        guard !normalizedQuery.isEmpty else { return nil }
+        var scores: [String: Int] = [:]
+        scores.reserveCapacity(books.count)
+        for book in books {
+            scores[book.id] = fuzzyScore(query: normalizedQuery, searchKey: book.searchKey)
+        }
+        return scores
     }
 
     /// Lowercased, diacritic-free, with runs of non-alphanumerics collapsed to one space.
@@ -112,7 +122,11 @@ enum LibrarySearch {
     /// for no match. Substring matches score 10,000 minus their offset; otherwise
     /// the query's characters must appear in order, with gaps penalized.
     static func fuzzyScore(query: String, candidate: String) -> Int? {
-        let normalizedCandidate = normalized(candidate)
+        fuzzyScore(query: query, searchKey: normalized(candidate))
+    }
+
+    /// Same as `fuzzyScore(query:candidate:)` for an already-normalized candidate.
+    static func fuzzyScore(query: String, searchKey normalizedCandidate: String) -> Int? {
         guard !query.isEmpty, !normalizedCandidate.isEmpty else {
             return query.isEmpty ? 0 : nil
         }

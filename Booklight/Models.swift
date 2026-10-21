@@ -142,13 +142,37 @@ struct Book: Identifiable, Hashable, Sendable {
     static let unreadProgressThreshold = 0.01
 
     var id: String
-    var title: String
+    let title: String
+    /// `title` normalized for search, computed once instead of on every
+    /// comparison while filtering and sorting.
+    let searchKey: String
     var fileURL: URL
     var format: BookFormat
     var fileSize: Int64
     var addedAt: Date
     var modifiedAt: Date
     var progressState: BookProgressState?
+
+    init(
+        id: String,
+        title: String,
+        fileURL: URL,
+        format: BookFormat,
+        fileSize: Int64,
+        addedAt: Date,
+        modifiedAt: Date,
+        progressState: BookProgressState?
+    ) {
+        self.id = id
+        self.title = title
+        self.searchKey = LibrarySearch.normalized(title)
+        self.fileURL = fileURL
+        self.format = format
+        self.fileSize = fileSize
+        self.addedAt = addedAt
+        self.modifiedAt = modifiedAt
+        self.progressState = progressState
+    }
 
     var progress: Double {
         progressState?.progress ?? 0

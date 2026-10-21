@@ -402,9 +402,17 @@ final class LibraryController: ObservableObject {
                 guard !Task.isCancelled else { return }
 
                 await MainActor.run {
-                    self?.books = booksResult
-                    self?.lastScanAt = .now
-                    self?.errorMessage = nil
+                    guard let self else { return }
+                    // The scan only sees what's on disk; re-apply debounced writes
+                    // that haven't landed yet so in-memory progress doesn't jump back.
+                    self.books = booksResult.map { book in
+                        guard let pending = self.pendingWriteStates[book.id] else { return book }
+                        var updated = book
+                        updated.progressState = Self.mergeStates(local: pending, remote: book.progressState)
+                        return updated
+                    }
+                    self.lastScanAt = .now
+                    self.errorMessage = nil
                 }
             } catch {
                 guard !Task.isCancelled else { return }

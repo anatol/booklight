@@ -463,6 +463,25 @@ private struct BookCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(book.title), \(book.displaySubtitle)")
+        .accessibilityValue(accessibilityStatus)
+    }
+
+    /// Reading state spoken after the title, e.g. "42 percent read, opened 2 hours ago".
+    private var accessibilityStatus: String {
+        var parts: [String] = []
+        if book.isFinished {
+            parts.append("Finished")
+        } else if book.isUnreadLike {
+            parts.append("Unread")
+        } else if book.isActive {
+            parts.append("\(Int((book.progress * 100).rounded())) percent read")
+        }
+        if let lastOpenedAt = book.lastOpenedAt {
+            parts.append("opened \(Self.relativeFormatter.localizedString(for: lastOpenedAt, relativeTo: .now))")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private func statusBadge(_ label: String, tint: Color) -> some View {

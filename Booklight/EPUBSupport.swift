@@ -8,9 +8,17 @@ struct EPUBDocument: Sendable {
         var url: URL
     }
 
+    struct TOCEntry: Hashable, Sendable {
+        var title: String
+        var level: Int
+        var spineIndex: Int
+        var fragment: String?
+    }
+
     var title: String
     var extractedRootURL: URL
     var spine: [SpineItem]
+    var tableOfContents: [TOCEntry]
     /// URL of the combined single-page HTML that merges all spine chapters
     /// into one continuous scrollable document.
     var combinedHTMLURL: URL
@@ -104,10 +112,19 @@ enum EPUBPreparation {
             extractedRootURL: extractedRoot
         )
 
+        // The table of contents is optional: a missing or malformed one just
+        // means the book has no contents list.
+        var tableOfContents: [EPUBDocument.TOCEntry] = []
+        if let tocHref = package.tocHref {
+            let tocURL = URL(fileURLWithPath: tocHref.removingPercentEncoding ?? tocHref, relativeTo: packageDirectory).standardizedFileURL
+            tableOfContents = EPUBTableOfContents.entries(at: tocURL, spine: spineItems)
+        }
+
         return EPUBDocument(
             title: package.title?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).nonEmpty ?? fallbackTitle,
             extractedRootURL: extractedRoot,
             spine: spineItems,
+            tableOfContents: tableOfContents,
             combinedHTMLURL: combinedURL
         )
     }
@@ -730,6 +747,9 @@ private struct PackageDocument {
     var title: String?
     var manifest: [String: ManifestItem]
     var spine: [String]
+    /// Href (relative to the package file) of the EPUB 3 nav document, or the
+    /// EPUB 2 NCX as a fallback.
+    var tocHref: String?
 
     struct ManifestItem {
         var href: String
@@ -756,10 +776,13 @@ private enum PackageDocumentParser {
         }
         let spine = delegate.spine.filter { readableManifest[$0] != nil }
 
+        let tocHref = delegate.navHref ?? delegate.spineTOCID.flatMap { delegate.manifest[$0]?.href }
+
         return PackageDocument(
             title: delegate.title.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
             manifest: readableManifest,
-            spine: spine
+            spine: spine,
+            tocHref: tocHref
         )
     }
 }
@@ -768,6 +791,10 @@ private final class MutablePackageParser: NSObject, XMLParserDelegate {
     var title = ""
     var manifest: [String: PackageDocument.ManifestItem] = [:]
     var spine: [String] = []
+    /// Manifest item carrying `properties="nav"` (EPUB 3 contents).
+    var navHref: String?
+    /// The `toc` attribute of `<spine>`: the manifest id of the EPUB 2 NCX.
+    var spineTOCID: String?
 
     private var isInsideTitle = false
 
@@ -782,7 +809,12 @@ private final class MutablePackageParser: NSObject, XMLParserDelegate {
         } else if lowered == "item" || lowered.hasSuffix(":item") {
             if let id = attributeDict["id"], let href = attributeDict["href"], let mediaType = attributeDict["media-type"] {
                 manifest[id] = .init(href: href, mediaType: mediaType)
+                if attributeDict["properties"]?.split(separator: " ").contains("nav") == true {
+                    navHref = href
+                }
             }
+        } else if lowered == "spine" || lowered.hasSuffix(":spine") {
+            spineTOCID = attributeDict["toc"]
         } else if lowered == "itemref" || lowered.hasSuffix(":itemref") {
             if let idref = attributeDict["idref"] {
                 spine.append(idref)
@@ -799,6 +831,138 @@ private final class MutablePackageParser: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         if elementName.lowercased().hasSuffix("title") {
             isInsideTitle = false
+        }
+    }
+}
+
+// MARK: - Table of contents
+
+/// Reads an EPUB 3 navigation document (`<nav epub:type="toc">`) or an EPUB 2
+/// NCX and maps its links onto spine items.
+enum EPUBTableOfContents {
+    struct RawEntry: Equatable {
+        var title: String
+        /// As written in the document: relative to the TOC file, may carry a `#fragment`.
+        var href: String
+        var level: Int
+    }
+
+    static func entries(at url: URL, spine: [EPUBDocument.SpineItem]) -> [EPUBDocument.TOCEntry] {
+        guard let parser = XMLParser(contentsOf: url) else { return [] }
+        let delegate = TOCParser()
+        parser.delegate = delegate
+        parser.shouldResolveExternalEntities = false
+        // Keep whatever was read even if the markup is malformed further down
+        // (nav documents are XHTML but not always well-formed XML).
+        _ = parser.parse()
+        return resolve(delegate.entries, relativeTo: url.deletingLastPathComponent(), spine: spine)
+    }
+
+    /// Drops entries whose target isn't a spine item.
+    static func resolve(_ raw: [RawEntry], relativeTo directory: URL, spine: [EPUBDocument.SpineItem]) -> [EPUBDocument.TOCEntry] {
+        var spineIndexByPath: [String: Int] = [:]
+        for item in spine {
+            spineIndexByPath[item.url.standardizedFileURL.path] = item.index
+        }
+
+        return raw.compactMap { entry in
+            let parts = entry.href.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+            let filePart = parts.first.map(String.init) ?? ""
+            let decoded = filePart.removingPercentEncoding ?? filePart
+            let fragment = parts.count > 1 ? (String(parts[1]).removingPercentEncoding ?? String(parts[1])) : nil
+            guard !decoded.isEmpty,
+                let index = spineIndexByPath[URL(fileURLWithPath: decoded, relativeTo: directory).standardizedFileURL.path]
+            else { return nil }
+            let title = entry.title.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard !title.isEmpty else { return nil }
+            return EPUBDocument.TOCEntry(title: title, level: entry.level, spineIndex: index, fragment: fragment?.nonEmpty)
+        }
+    }
+
+    private final class TOCParser: NSObject, XMLParserDelegate {
+        var entries: [RawEntry] = []
+
+        // EPUB 3 nav state
+        private var navDepth = 0          // > 0 while inside the toc <nav>
+        private var otherNavDepth = 0     // inside a non-toc <nav> (page-list, landmarks)
+        private var listDepth = 0
+        private var currentHref: String?
+        private var currentTitle = ""
+        private var isInsideLink = false
+
+        // EPUB 2 NCX state
+        private var navPointDepth = 0
+        private var isInsideNavLabelText = false
+        private var ncxTitles: [String] = []   // title of each open navPoint
+        private var inNCXPageList = false
+
+        func parser(
+            _ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?,
+            attributes attributeDict: [String: String] = [:]
+        ) {
+            let name = elementName.lowercased()
+            switch name {
+            case "nav":
+                if navDepth > 0 || otherNavDepth > 0 {
+                    // Nested nav: treat as part of whichever one we're in.
+                    if navDepth > 0 { navDepth += 1 } else { otherNavDepth += 1 }
+                } else if (attributeDict["epub:type"] ?? attributeDict["type"])?.split(separator: " ").contains("toc") == true {
+                    navDepth = 1
+                } else {
+                    otherNavDepth = 1
+                }
+            case "ol" where navDepth > 0, "ul" where navDepth > 0:
+                listDepth += 1
+            case "a" where navDepth > 0:
+                if let href = attributeDict["href"] {
+                    currentHref = href
+                    currentTitle = ""
+                    isInsideLink = true
+                }
+            case "pagelist":
+                inNCXPageList = true
+            case "navpoint" where !inNCXPageList:
+                navPointDepth += 1
+                ncxTitles.append("")
+            case "text" where navPointDepth > 0:
+                isInsideNavLabelText = true
+                ncxTitles[ncxTitles.count - 1] = ""
+            case "content" where navPointDepth > 0:
+                if let src = attributeDict["src"] {
+                    entries.append(RawEntry(title: ncxTitles.last ?? "", href: src, level: navPointDepth - 1))
+                }
+            default:
+                break
+            }
+        }
+
+        func parser(_ parser: XMLParser, foundCharacters string: String) {
+            if isInsideLink { currentTitle += string }
+            if isInsideNavLabelText, !ncxTitles.isEmpty { ncxTitles[ncxTitles.count - 1] += string }
+        }
+
+        func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+            switch elementName.lowercased() {
+            case "nav":
+                if navDepth > 0 { navDepth -= 1 } else if otherNavDepth > 0 { otherNavDepth -= 1 }
+            case "ol" where navDepth > 0, "ul" where navDepth > 0:
+                listDepth = max(listDepth - 1, 0)
+            case "a" where isInsideLink:
+                if let href = currentHref {
+                    entries.append(RawEntry(title: currentTitle, href: href, level: max(listDepth - 1, 0)))
+                }
+                currentHref = nil
+                isInsideLink = false
+            case "pagelist":
+                inNCXPageList = false
+            case "navpoint" where !inNCXPageList:
+                navPointDepth = max(navPointDepth - 1, 0)
+                if !ncxTitles.isEmpty { ncxTitles.removeLast() }
+            case "text":
+                isInsideNavLabelText = false
+            default:
+                break
+            }
         }
     }
 }

@@ -1,6 +1,21 @@
 import Observation
 import SwiftUI
 
+/// One line of a book's table of contents.
+struct ReaderTOCEntry: Identifiable, Hashable, Sendable {
+    enum Destination: Hashable, Sendable {
+        case pdf(pageIndex: Int, offsetY: Double)
+        /// A spine item (chapter) plus an optional element id inside it.
+        case epub(spineIndex: Int, fragment: String?)
+    }
+
+    let id: Int
+    let title: String
+    /// Nesting depth; 0 for top-level entries.
+    let level: Int
+    let destination: Destination
+}
+
 /// What the shared reader UI needs from a format-specific reader (PDFKit or
 /// the EPUB web view): scrolling, in-document search, and position bookkeeping.
 @MainActor
@@ -37,6 +52,11 @@ protocol ReaderEngine: AnyObject, Observable {
     /// Returns to where the reader was before the last followed link or jump.
     func jumpBack()
 
+    // MARK: Table of contents
+    /// Flattened table of contents in reading order; empty when the book has none.
+    var tableOfContents: [ReaderTOCEntry] { get }
+    func go(to entry: ReaderTOCEntry)
+
     // MARK: Text size
     /// Whether the format reflows text, so text size can change.
     var supportsTextSize: Bool { get }
@@ -47,6 +67,8 @@ protocol ReaderEngine: AnyObject, Observable {
 }
 
 extension ReaderEngine {
+    var tableOfContents: [ReaderTOCEntry] { [] }
+    func go(to entry: ReaderTOCEntry) {}
     var supportsTextSize: Bool { false }
     var textSizePercent: Int? { nil }
     func increaseTextSize() {}
@@ -64,6 +86,7 @@ final class ReaderSession<Engine: ReaderEngine> {
     /// Whether the corner controls are showing. Hidden by default so the page
     /// has the whole window.
     var isChromeVisible = false
+    var isTableOfContentsVisible = false
     @ObservationIgnored private var chromeHideTask: Task<Void, Never>?
 
     init(engine: Engine) {

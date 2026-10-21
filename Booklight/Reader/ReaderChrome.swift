@@ -25,6 +25,15 @@ struct ReaderCornerControls<Engine: ReaderEngine>: View {
             }
             .accessibilityLabel("Find in book")
 
+            if !engine.tableOfContents.isEmpty {
+                Button {
+                    session.isTableOfContentsVisible = true
+                } label: {
+                    RoundGlyph(systemName: "list.bullet")
+                }
+                .accessibilityLabel("Table of contents")
+            }
+
             if engine.supportsTextSize {
                 Menu {
                     Button("Larger Text", systemImage: "textformat.size.larger") {
@@ -46,6 +55,38 @@ struct ReaderCornerControls<Engine: ReaderEngine>: View {
         }
         .buttonStyle(.plain)
         .padding(12)
+    }
+}
+
+/// The book's contents as an indented list; choosing a line jumps there.
+struct ReaderTableOfContentsView<Engine: ReaderEngine>: View {
+    let session: ReaderSession<Engine>
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List(session.engine.tableOfContents) { entry in
+                Button {
+                    session.engine.go(to: entry)
+                    dismiss()
+                } label: {
+                    Text(entry.title)
+                        .multilineTextAlignment(.leading)
+                        .padding(.leading, CGFloat(min(entry.level, 4)) * 18)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationTitle("Contents")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .frame(minWidth: 320, minHeight: 420)
     }
 }
 

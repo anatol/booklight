@@ -30,6 +30,42 @@ final class PDFScrollProxy: ReaderEngine {
         positionReporter?()
     }
 
+    // MARK: - Table of contents
+
+    /// The document outline flattened in reading order. Entries without a page
+    /// destination are skipped.
+    var tableOfContents: [ReaderTOCEntry] {
+        guard let document = pdfView?.document, let root = document.outlineRoot else { return [] }
+        var entries: [ReaderTOCEntry] = []
+        func visit(_ node: PDFOutline, level: Int) {
+            for index in 0..<node.numberOfChildren {
+                guard let child = node.child(at: index) else { continue }
+                if let title = child.label?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty,
+                    let destination = child.destination, let page = destination.page
+                {
+                    let pageIndex = document.index(for: page)
+                    let height = page.bounds(for: .mediaBox).height
+                    // A destination's point is in PDF space (origin bottom-left);
+                    // unspecified coordinates come through as a huge sentinel.
+                    let y = destination.point.y
+                    let offsetY = (height > 0 && y >= 0 && y <= height) ? 1 - Double(y / height) : 0
+                    entries.append(
+                        ReaderTOCEntry(
+                            id: entries.count, title: title, level: level,
+                            destination: .pdf(pageIndex: pageIndex, offsetY: offsetY)))
+                }
+                visit(child, level: level + 1)
+            }
+        }
+        visit(root, level: 0)
+        return entries
+    }
+
+    func go(to entry: ReaderTOCEntry) {
+        guard case .pdf(let pageIndex, let offsetY) = entry.destination else { return }
+        pdfView?.go(toPageIndex: pageIndex, offsetY: offsetY)
+    }
+
     // MARK: - Position save/restore (for returning to pre-search position)
 
     /// Saved PDF destination from before the search was opened,

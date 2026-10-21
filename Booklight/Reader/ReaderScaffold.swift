@@ -3,7 +3,7 @@ import SwiftUI
 /// Shared chrome around a format-specific reader: the floating find bar,
 /// keyboard shortcuts, and Space / Shift+Space paging.
 struct ReaderScaffold<Engine: ReaderEngine, Content: View>: View {
-    let session: ReaderSession<Engine>
+    @Bindable var session: ReaderSession<Engine>
     /// Reading progress (0–1) shown on the scrubber.
     let progress: Double?
     @ViewBuilder let content: Content
@@ -118,5 +118,8 @@ struct ReaderScaffold<Engine: ReaderEngine, Content: View>: View {
             return .handled
         }
         .toolbar(.hidden, for: .navigationBar)
+        .sheet(isPresented: $session.isTableOfContentsVisible) {
+            ReaderTableOfContentsView(session: session)
+        }
     }
 }

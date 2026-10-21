@@ -145,6 +145,29 @@ final class EPUBScrollProxy: ReaderEngine {
         webView?.evaluateJavaScript("window.readerJumpBack && window.readerJumpBack();")
     }
 
+    // MARK: - Table of contents
+
+    var tableOfContents: [ReaderTOCEntry] = []
+
+    func setTableOfContents(_ entries: [EPUBDocument.TOCEntry]) {
+        tableOfContents = entries.enumerated().map { offset, entry in
+            ReaderTOCEntry(
+                id: offset, title: entry.title, level: entry.level,
+                destination: .epub(spineIndex: entry.spineIndex, fragment: entry.fragment))
+        }
+    }
+
+    func go(to entry: ReaderTOCEntry) {
+        guard case .epub(let spineIndex, let fragment) = entry.destination, let webView else { return }
+        Task { [weak webView] in
+            _ = try? await webView?.callAsyncJavaScript(
+                "if (window.clearHold) window.clearHold(); return window.readerJumpToChapterIndex && window.readerJumpToChapterIndex(index, fragment);",
+                arguments: ["index": spineIndex, "fragment": fragment ?? ""],
+                contentWorld: .page
+            )
+        }
+    }
+
     // MARK: - Font size
 
     var supportsTextSize: Bool { true }
@@ -305,6 +328,7 @@ struct EPUBBookView: View {
 
             await MainActor.run {
                 document = prepared
+                session.engine.setTableOfContents(prepared.tableOfContents)
 
                 let storedOverall = book.progressState?.progress ?? 0
                 let storedChapterPath = book.progressState?.epubChapterPath

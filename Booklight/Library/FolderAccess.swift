@@ -60,8 +60,12 @@ final class FolderAccess {
 
     func removeLocalLibrary(at index: Int) {
         guard localLibraries.indices.contains(index) else { return }
-        scopedLocalLibraries[index].stopAccessingSecurityScopedResource()
-        scopedLocalLibraries.remove(at: index)
+        // The two lists are parallel, except for Debug-hook folders, which have
+        // no security scope to release.
+        if scopedLocalLibraries.indices.contains(index) {
+            scopedLocalLibraries[index].stopAccessingSecurityScopedResource()
+            scopedLocalLibraries.remove(at: index)
+        }
         localLibraries.remove(at: index)
         persistLocalLibrariesBookmarks()
     }

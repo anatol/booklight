@@ -542,14 +542,26 @@ struct SettingsView: View {
                         "These folders are local to this computer and are not shared across machines. They are usually best for bulk collections or older books; the app scans them for books but never modifies their contents."
                     )
                 ) {
-                    List {
-                        ForEach(Array(library.localLibraries.enumerated()), id: \.element) { index, url in
+                    ForEach(Array(library.localLibraries.enumerated()), id: \.element) { index, url in
+                        HStack {
                             Text(displayPath(for: url))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+
+                            Spacer()
+
+                            // An explicit button: swipe-to-delete is hard to
+                            // discover with a mouse or trackpad.
+                            Button(role: .destructive) {
+                                library.removeLocalLibrary(at: index)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Remove \(displayPath(for: url))")
                         }
-                        .onDelete { indexSet in
-                            for index in indexSet {
+                        .swipeActions {
+                            Button("Remove", role: .destructive) {
                                 library.removeLocalLibrary(at: index)
                             }
                         }

@@ -70,26 +70,19 @@ final class EPUBScrollProxy: ObservableObject {
 
         lastSearchText = text
 
-        // Escape single quotes and backslashes for safe JS string interpolation.
-        let escaped =
-            text
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
-
-        let js = "window._bookSearch.search('\(escaped)');"
-        webView.evaluateJavaScript(js) { [weak self] result, _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                if let dict = result as? [String: Any],
-                    let count = dict["count"] as? Int
-                {
-                    self.searchMatchCount = count
-                    self.searchCurrentIndex = count > 0 ? 0 : 0
-                } else {
-                    self.searchMatchCount = 0
-                    self.searchCurrentIndex = 0
-                }
-            }
+        // Pass the query as an argument rather than splicing it into the script,
+        // so quotes, backslashes and newlines can't break (or inject) JavaScript.
+        Task { [weak self, weak webView] in
+            guard let webView else { return }
+            let result = try? await webView.callAsyncJavaScript(
+                "return window._bookSearch.search(query);",
+                arguments: ["query": text],
+                contentWorld: .page
+            )
+            guard let self, self.lastSearchText == text else { return }
+            let count = (result as? [String: Any])?["count"] as? Int ?? 0
+            self.searchMatchCount = count
+            self.searchCurrentIndex = 0
         }
     }
 

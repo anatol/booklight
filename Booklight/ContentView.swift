@@ -226,6 +226,8 @@ private struct BookGallerySection: View {
     var library: LibraryModel
     @Bindable var browser: LibraryBrowserState
     var isActiveSection: Bool = false
+    /// Book awaiting confirmation before it is removed from the active shelf.
+    @State private var bookPendingRemoval: Book?
 
     private let columns = [
         GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 18, alignment: .top)
@@ -268,7 +270,7 @@ private struct BookGallerySection: View {
                             }
 
                             Button(role: .destructive) {
-                                library.removeFromActive(book: book)
+                                bookPendingRemoval = book
                             } label: {
                                 Label("Remove from Active", systemImage: "trash")
                             }
@@ -276,6 +278,24 @@ private struct BookGallerySection: View {
                     }
                 }
             }
+        }
+        .confirmationDialog(
+            "Remove “\(bookPendingRemoval?.title ?? "")” from Active Books?",
+            isPresented: Binding(
+                get: { bookPendingRemoval != nil },
+                set: { if !$0 { bookPendingRemoval = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: bookPendingRemoval
+        ) { book in
+            Button("Remove", role: .destructive) {
+                library.removeFromActive(book: book)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text(
+                "This deletes the copy in the tracking directory and its reading progress, on every device that syncs it. Your original file in a local library is not touched."
+            )
         }
     }
 }

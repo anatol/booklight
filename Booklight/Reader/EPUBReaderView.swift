@@ -179,7 +179,7 @@ final class EPUBScrollProxy: ReaderEngine {
     /// The reading base font size (px) that corresponds to 100%. The combined HTML
     /// sets the same value on <html>, so the percentage controls scale a comfortable
     /// default rather than the browser's small 16px. Kept in sync with EPUBSupport's CSS.
-    static let baseFontPx = 20
+    static let baseFontPx = 30
 
     /// Injects CSS to override the root font size, preserving the current reading position.
     /// Uses both font-size on <html> in px (works for em/rem-based EPUBs) and

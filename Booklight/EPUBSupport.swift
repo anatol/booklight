@@ -118,11 +118,11 @@ enum EPUBPreparation {
 /// Combines all EPUB spine chapters into a single HTML document for continuous scrolling.
 /// Each chapter's body content is extracted, resource paths are rewritten to be relative
 /// to the extraction root, and everything is wrapped in chapter dividers.
-/// The result is cached as `_combined-v8.html` in the extraction directory — it's automatically
+/// The result is cached as `_combined-v9.html` in the extraction directory — it's automatically
 /// invalidated when the EPUB is re-extracted (the directory is wiped on version change).
 enum EPUBCombiner {
     /// Builds (or returns cached) combined HTML from all spine items.
-    /// - Returns: URL of the `_combined-v8.html` file in the extraction directory.
+    /// - Returns: URL of the `_combined-v9.html` file in the extraction directory.
     static func buildCombinedHTML(
         spine: [EPUBDocument.SpineItem],
         extractedRootURL: URL
@@ -130,7 +130,7 @@ enum EPUBCombiner {
         // The filename carries a layout version suffix so that bumping the reading
         // CSS below regenerates the combined document for already-extracted books
         // (rebuilding from the cached chapters is cheap — no re-unzip required).
-        let combinedURL = extractedRootURL.appending(path: "_combined-v8.html")
+        let combinedURL = extractedRootURL.appending(path: "_combined-v9.html")
 
         // If the combined file already exists (from a previous open), reuse it.
         if FileManager.default.fileExists(atPath: combinedURL.path()) {
@@ -204,7 +204,7 @@ enum EPUBCombiner {
                 /* Comfortable reading base. The font-size controls scale this value
                    (see EPUBReaderView); using px makes the percentage map to a
                    readable default instead of the browser's small 16px. */
-                font-size: 20px;
+                font-size: 30px;
                 -webkit-text-size-adjust: 100%;
                 text-size-adjust: 100%;
                 background-color: #ffffff;

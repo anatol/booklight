@@ -67,6 +67,19 @@ final class FolderAccess {
     }
 
     private func restore() {
+        #if DEBUG
+            // Test hook: `-BooklightTrackingDir <path> [-BooklightLibraryDir <path>]`
+            // launch arguments select folders directly, skipping the picker and
+            // bookmarks, so the app can be driven from scripts and screenshots.
+            if let path = defaults.string(forKey: "BooklightTrackingDir") {
+                trackingDirectoryURL = URL(fileURLWithPath: path, isDirectory: true)
+                if let libraryPath = defaults.string(forKey: "BooklightLibraryDir") {
+                    localLibraries = [URL(fileURLWithPath: libraryPath, isDirectory: true)]
+                }
+                return
+            }
+        #endif
+
         if let data = defaults.data(forKey: trackingBookmarkKey) {
             do {
                 let resolved = try resolveScopedURL(from: data)

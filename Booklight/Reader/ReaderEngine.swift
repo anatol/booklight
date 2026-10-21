@@ -30,6 +30,8 @@ protocol ReaderEngine: AnyObject, Observable {
     func reportCurrentPosition()
 
     // MARK: Navigation
+    /// Jumps to an overall position in the book (0 = start, 1 = end).
+    func seek(toProgress progress: Double)
     func scrollPageDown()
     func scrollPageUp()
     /// Returns to where the reader was before the last followed link or jump.
@@ -38,12 +40,15 @@ protocol ReaderEngine: AnyObject, Observable {
     // MARK: Text size
     /// Whether the format reflows text, so text size can change.
     var supportsTextSize: Bool { get }
+    /// Current text size as a percentage of the default; nil when not adjustable.
+    var textSizePercent: Int? { get }
     func increaseTextSize()
     func decreaseTextSize()
 }
 
 extension ReaderEngine {
     var supportsTextSize: Bool { false }
+    var textSizePercent: Int? { nil }
     func increaseTextSize() {}
     func decreaseTextSize() {}
 }
@@ -56,6 +61,9 @@ final class ReaderSession<Engine: ReaderEngine> {
     let engine: Engine
     var isSearchVisible = false
     var searchText = ""
+    /// Whether the touch-friendly top and bottom bars are showing.
+    var isChromeVisible = true
+    @ObservationIgnored private var chromeHideTask: Task<Void, Never>?
 
     init(engine: Engine) {
         self.engine = engine
@@ -64,6 +72,33 @@ final class ReaderSession<Engine: ReaderEngine> {
     /// Whether the text field still shows the query whose results are displayed.
     var hasActiveSearch: Bool {
         !engine.lastSearchText.isEmpty && engine.lastSearchText == searchText
+    }
+
+    /// A tap on the page: confirms a search position if the find bar is open,
+    /// otherwise shows or hides the reader bars.
+    func contentTapped() {
+        if isSearchVisible {
+            confirmSearchPosition()
+        } else {
+            setChromeVisible(!isChromeVisible)
+        }
+    }
+
+    func setChromeVisible(_ visible: Bool) {
+        chromeHideTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isChromeVisible = visible
+        }
+    }
+
+    /// Hides the bars after a few seconds so they don't cover the text for long.
+    func scheduleChromeAutoHide(after delay: Duration = .seconds(4)) {
+        chromeHideTask?.cancel()
+        chromeHideTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            self?.setChromeVisible(false)
+        }
     }
 
     func toggleSearch() {

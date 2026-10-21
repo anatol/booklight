@@ -203,6 +203,16 @@ final class PDFScrollProxy: ReaderEngine {
 
     // MARK: - Scrolling
 
+    /// Jumps to an overall position using the same page-interval measure as
+    /// `PDFReadingPosition.progress`.
+    func seek(toProgress progress: Double) {
+        guard let pdfView, let document = pdfView.document, document.pageCount > 0 else { return }
+        let intervals = Double(max(document.pageCount - 1, 1))
+        let position = progress.clampedToUnit * intervals
+        let pageIndex = min(Int(position), document.pageCount - 1)
+        pdfView.go(toPageIndex: pageIndex, offsetY: position - Double(pageIndex))
+    }
+
     /// Scroll the PDF down by one viewport height (with slight overlap).
     func scrollPageDown() {
         guard let scrollView = findScrollView() else { return }
@@ -249,7 +259,7 @@ struct PDFBookView: View {
     @State private var session = ReaderSession(engine: PDFScrollProxy())
 
     var body: some View {
-        ReaderScaffold(session: session) {
+        ReaderScaffold(session: session, title: book.title, progress: displayedProgress) {
             PDFReaderRepresentable(
                 documentURL: bookURL,
                 initialPageIndex: book.progressState?.pdfPageIndex ?? 0,
@@ -259,11 +269,10 @@ struct PDFBookView: View {
                 externalPageOffsetY: book.progressState?.pdfPageOffsetY ?? 0,
                 scrollProxy: session.engine,
                 onContentTapped: {
-                    // Clicking content during search confirms the current
-                    // position as the new reading location.
-                    guard session.isSearchVisible else { return }
+                    // During search, a tap confirms the current position as the
+                    // reading location; otherwise it toggles the reader bars.
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        session.confirmSearchPosition()
+                        session.contentTapped()
                     }
                 }
             ) { pageIndex, pageCount, pageOffsetY in
@@ -313,6 +322,13 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         pdfView.displayDirection = .vertical
         pdfView.displaysPageBreaks = true
         pdfView.backgroundColor = .secondarySystemBackground
+        // The reader's own scrubber replaces the system scroll indicator. PDFView
+        // creates its scroll view lazily, so look again once it has been laid out.
+        func hideSystemIndicator(of pdfView: PDFView?) {
+            pdfView?.subviews.compactMap { $0 as? UIScrollView }.forEach { $0.showsVerticalScrollIndicator = false }
+        }
+        hideSystemIndicator(of: pdfView)
+        DispatchQueue.main.async { [weak pdfView] in hideSystemIndicator(of: pdfView) }
         // Wire up the scroll proxy so SwiftUI key events can drive scrolling.
         scrollProxy.pdfView = pdfView
         scrollProxy.positionReporter = { [weak coordinator = context.coordinator] in
@@ -423,24 +439,10 @@ struct PDFReaderRepresentable: UIViewRepresentable {
 
             // Restore saved position: go to the exact page + offset.
             Task { @MainActor [weak self, weak pdfView] in
-                guard let self, let pdfView, let document = pdfView.document else {
+                guard let self, let pdfView, pdfView.document != nil else {
                     return
                 }
-                let pageCount = document.pageCount
-                let safeIndex = min(max(initialPageIndex, 0), max(pageCount - 1, 0))
-                if let page = document.page(at: safeIndex) {
-                    if initialPageOffsetY > 0 {
-                        // Restore sub-page position using PDFDestination.
-                        // PDF coordinate system has origin at bottom-left, so Y increases upward.
-                        let pageHeight = page.bounds(for: .mediaBox).height
-                        // offsetY=0 means top of page, which in PDF coords is the max Y value.
-                        let pdfY = pageHeight * (1.0 - initialPageOffsetY)
-                        let destination = PDFDestination(page: page, at: CGPoint(x: 0, y: pdfY))
-                        pdfView.go(to: destination)
-                    } else {
-                        pdfView.go(to: page)
-                    }
-                }
+                pdfView.go(toPageIndex: initialPageIndex, offsetY: initialPageOffsetY)
                 self.emitPosition()
             }
         }
@@ -484,20 +486,26 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         func applyExternalJumpIfNeeded(token: UUID?, pageIndex: Int, pageOffsetY: Double) {
             guard let token, token != appliedExternalJumpToken else { return }
             appliedExternalJumpToken = token
-            guard let pdfView, let document = pdfView.document else { return }
-
-            let safeIndex = min(max(pageIndex, 0), max(document.pageCount - 1, 0))
-            guard let page = document.page(at: safeIndex) else { return }
-
-            if pageOffsetY > 0 {
-                let pageHeight = page.bounds(for: .mediaBox).height
-                let pdfY = pageHeight * (1.0 - pageOffsetY.clampedToUnit)
-                let destination = PDFDestination(page: page, at: CGPoint(x: 0, y: pdfY))
-                pdfView.go(to: destination)
-            } else {
-                pdfView.go(to: page)
-            }
+            guard let pdfView, pdfView.document != nil else { return }
+            pdfView.go(toPageIndex: pageIndex, offsetY: pageOffsetY)
             emitPosition()
+        }
+    }
+}
+
+extension PDFView {
+    /// Scrolls so the given page, `offsetY` of the way down it (0 = top), is at
+    /// the top of the viewport.
+    func go(toPageIndex pageIndex: Int, offsetY: Double) {
+        guard let document, let page = document.page(at: min(max(pageIndex, 0), max(document.pageCount - 1, 0))) else { return }
+        if offsetY > 0 {
+            // PDF coordinates have their origin bottom-left, so the top of the
+            // page is the maximum Y.
+            let pageHeight = page.bounds(for: .mediaBox).height
+            let pdfY = pageHeight * (1.0 - offsetY.clampedToUnit)
+            go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: pdfY)))
+        } else {
+            go(to: page)
         }
     }
 }

@@ -148,6 +148,18 @@ final class EPUBScrollProxy: ReaderEngine {
     // MARK: - Font size
 
     var supportsTextSize: Bool { true }
+    var textSizePercent: Int? { fontSizePercent }
+
+    func seek(toProgress progress: Double) {
+        webView?.evaluateJavaScript(
+            """
+            (function() {
+                var root = document.documentElement;
+                var maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
+                window.scrollTo(0, maxScroll * \(progress.clampedToUnit));
+            })();
+            """)
+    }
 
     /// Increase font size by one step (10%), capped at 200%.
     func increaseTextSize() {
@@ -221,7 +233,7 @@ struct EPUBBookView: View {
     @State private var session = ReaderSession(engine: EPUBScrollProxy())
 
     var body: some View {
-        ReaderScaffold(session: session) {
+        ReaderScaffold(session: session, title: book.title, progress: displayedProgress) {
             Group {
                 if let document {
                     EPUBWebView(
@@ -234,11 +246,10 @@ struct EPUBBookView: View {
                         scrollProxy: session.engine,
                         initialFontSizePercent: session.engine.fontSizePercent,
                         onContentTapped: {
-                            // Clicking content during search confirms the current
-                            // position as the new reading location.
-                            guard session.isSearchVisible else { return }
+                            // During search, a tap confirms the current position as the
+                            // reading location; otherwise it toggles the reader bars.
                             withAnimation(.easeInOut(duration: 0.2)) {
-                                session.confirmSearchPosition()
+                                session.contentTapped()
                             }
                         }
                     ) { chapterIndex, chapterProgress, overallProgress in
@@ -387,6 +398,8 @@ private struct EPUBWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        // The reader's own scrubber replaces the system scroll indicator.
+        webView.scrollView.showsVerticalScrollIndicator = false
         // Wire up scroll proxy so SwiftUI key events can drive scrolling.
         scrollProxy.webView = webView
         context.coordinator.attach(webView)
@@ -688,7 +701,9 @@ private struct EPUBWebView: UIViewRepresentable {
 
         // Notify native code when user clicks on content (not a text drag/selection).
         // Used to confirm the current position as the new reading location during search.
-        document.addEventListener('click', function() {
+        document.addEventListener('click', function(event) {
+            // A followed link is navigation, not a tap on the page.
+            if (event.defaultPrevented) return;
             var sel = window.getSelection();
             if (sel && sel.toString().length > 0) return;
             window.webkit.messageHandlers.contentTapped.postMessage({});

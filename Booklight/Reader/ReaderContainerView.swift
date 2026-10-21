@@ -7,11 +7,8 @@ struct ReaderContainerView: View {
     /// The reader's title, published to the window so the library screen
     /// underneath doesn't overwrite it.
     @Binding var readerTitle: String?
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
-    /// Controls visibility of the floating back button in the top-left corner.
-    @State private var showBackButton = false
     /// Reading progress (0.0–1.0) shown in the window title.
     @State private var displayedProgress: Double?
     /// The file the reader opened. Opening copies the book into the tracking
@@ -68,39 +65,6 @@ struct ReaderContainerView: View {
                         description: Text("This book is no longer present in the library."))
                 }
             }
-
-            // Invisible hover zone in the top-left corner that reveals the back button.
-            Color.clear
-                .frame(width: 80, height: 80)
-                .contentShape(Rectangle())
-                .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showBackButton = hovering
-                    }
-                }
-                .overlay(alignment: .topLeading) {
-                    if showBackButton {
-                        Button {
-                            dismiss()
-                        } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.title3.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .frame(width: 36, height: 36)
-                                .background(.regularMaterial, in: Circle())
-                                .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(12)
-                        .transition(.opacity)
-                        // Keep the button visible while the user is interacting with it.
-                        .onHover { hovering in
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                showBackButton = hovering
-                            }
-                        }
-                    }
-                }
         }
         .navigationTitle(windowTitle)
         .navigationBarTitleDisplayMode(.inline)

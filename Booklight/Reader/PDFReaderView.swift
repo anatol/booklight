@@ -326,6 +326,9 @@ struct PDFBookView: View {
                 }
             }
             .readerPageTheme(theme)
+            // In full screen the (hidden) title bar still counts as a top safe
+            // area, which left an empty strip above the first page.
+            .ignoresSafeArea(.container, edges: .top)
         }
         .task(id: book.id) {
             library.markOpened(book)

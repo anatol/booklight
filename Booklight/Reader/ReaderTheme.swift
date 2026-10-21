@@ -51,6 +51,9 @@ struct ReaderThemePicker: View {
                 Label(option.title, systemImage: option.systemImage).tag(option)
             }
         }
+        // Inline so the options show directly in the corner menu instead of
+        // behind a "Theme" submenu.
+        .pickerStyle(.inline)
     }
 }
 

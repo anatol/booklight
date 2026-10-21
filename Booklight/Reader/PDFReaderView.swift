@@ -394,6 +394,9 @@ struct PDFReaderRepresentable: UIViewRepresentable {
             onContentTapped()
         }
 
+        /// True while the saved position is being re-applied during initial layout.
+        private var isRestoring = false
+
         func install(documentURL: URL, initialPageIndex: Int, initialPageOffsetY: Double, in pdfView: PDFView) {
             guard currentDocumentURL != documentURL else {
                 return
@@ -443,6 +446,23 @@ struct PDFReaderRepresentable: UIViewRepresentable {
                     return
                 }
                 pdfView.go(toPageIndex: initialPageIndex, offsetY: initialPageOffsetY)
+
+                // The view is created at a provisional size and resized (which
+                // rescales the page, since it auto-scales to width) a few hundred
+                // milliseconds later; the point at the top then lands somewhere
+                // else. Keep re-applying the saved position whenever the size
+                // changes during the first 1.5 s, and report nothing meanwhile so
+                // the saved value isn't overwritten with a mid-layout measurement.
+                self.isRestoring = true
+                defer { self.isRestoring = false }
+                var appliedSize = pdfView.bounds.size
+                for _ in 0..<30 {
+                    try? await Task.sleep(for: .milliseconds(50))
+                    if pdfView.bounds.size != appliedSize {
+                        appliedSize = pdfView.bounds.size
+                        pdfView.go(toPageIndex: initialPageIndex, offsetY: initialPageOffsetY)
+                    }
+                }
                 self.emitPosition()
             }
         }
@@ -462,7 +482,7 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         /// consistent — `currentPage` can flip to the next page before the
         /// destination point catches up, causing progress to jump back and forth.
         func emitPosition(force: Bool = false) {
-            guard let pdfView else { return }
+            guard let pdfView, !isRestoring else { return }
             guard let readingPosition = pdfView.readingPosition() else { return }
 
             // Deduplicate: skip if page and offset haven't meaningfully changed.

@@ -118,11 +118,11 @@ enum EPUBPreparation {
 /// Combines all EPUB spine chapters into a single HTML document for continuous scrolling.
 /// Each chapter's body content is extracted, resource paths are rewritten to be relative
 /// to the extraction root, and everything is wrapped in chapter dividers.
-/// The result is cached as `_combined-v5.html` in the extraction directory — it's automatically
+/// The result is cached as `_combined-v6.html` in the extraction directory — it's automatically
 /// invalidated when the EPUB is re-extracted (the directory is wiped on version change).
 enum EPUBCombiner {
     /// Builds (or returns cached) combined HTML from all spine items.
-    /// - Returns: URL of the `_combined-v5.html` file in the extraction directory.
+    /// - Returns: URL of the `_combined-v6.html` file in the extraction directory.
     static func buildCombinedHTML(
         spine: [EPUBDocument.SpineItem],
         extractedRootURL: URL
@@ -130,7 +130,7 @@ enum EPUBCombiner {
         // The filename carries a layout version suffix so that bumping the reading
         // CSS below regenerates the combined document for already-extracted books
         // (rebuilding from the cached chapters is cheap — no re-unzip required).
-        let combinedURL = extractedRootURL.appending(path: "_combined-v5.html")
+        let combinedURL = extractedRootURL.appending(path: "_combined-v6.html")
 
         // If the combined file already exists (from a previous open), reuse it.
         if FileManager.default.fileExists(atPath: combinedURL.path()) {
@@ -163,7 +163,7 @@ enum EPUBCombiner {
             collectStylesheets(from: rawContent, chapterDir: chapterDir, into: &stylesheetPaths)
 
             // Extract the <body> content (everything between <body...> and </body>).
-            let bodyContent = extractBody(from: rawContent)
+            let bodyContent = expandSelfClosingTags(in: extractBody(from: rawContent))
 
             // Rewrite relative resource paths (src="...", href="...") to be
             // relative to the extraction root by prefixing with the chapter's directory.
@@ -246,6 +246,27 @@ enum EPUBCombiner {
             img, svg, video, canvas, iframe {
                 max-width: 100% !important;
                 height: auto;
+            }
+            /* Publishers often size images to the page width (img { width: 100% })
+               assuming a phone-sized paginated screen. On a wide window that turns a
+               portrait photo into something several screens tall. Cap the height to
+               the viewport; object-fit keeps the aspect ratio when the cap kicks in. */
+            img {
+                max-height: 85vh;
+                object-fit: contain;
+            }
+
+            /* Line spacing for running text.
+               Many publisher stylesheets set tight line-heights (1em–1.2em) on every
+               paragraph class, tuned for a small paginated page; on screen the lines
+               nearly touch. Class rules beat the body's line-height, so this needs
+               !important to apply. Headings get a tighter value so multi-line titles
+               still read as one block. */
+            p, li, dd, dt, blockquote, figcaption, td, th {
+                line-height: 1.5 !important;
+            }
+            h1, h2, h3, h4, h5, h6 {
+                line-height: 1.25 !important;
             }
 
             /* Let wide preformatted blocks wrap rather than overflow the page. */
@@ -341,6 +362,30 @@ enum EPUBCombiner {
         }
 
         return String(afterBodyOpen[..<bodyCloseRange.lowerBound])
+    }
+
+    /// Rewrites XHTML self-closing tags for non-void elements (`<div/>`, `<p/>`,
+    /// `<span/>`, `<a id="x"/>`, …) into explicit `<div></div>` pairs.
+    ///
+    /// Chapters are XHTML, where `<div class="rule"/>` is an empty element. But the
+    /// combined document is parsed as HTML, which ignores the trailing slash and
+    /// treats it as an *opening* tag that never closes — so everything after it
+    /// becomes its child. Publishers use such empty divs for decorative rules with
+    /// `width: 25%`, which then squeezed the rest of the chapter into a narrow
+    /// column (nested ones compounded down to a word per line), and empty anchors
+    /// turned the following text into a link.
+    /// Void elements (img, br, hr, …) are left alone since HTML handles them.
+    private static func expandSelfClosingTags(in html: String) -> String {
+        let pattern =
+            #"<(?!(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b)([A-Za-z][A-Za-z0-9:_-]*)((?:\s[^<>]*?)?)\s*/>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+            return html
+        }
+        return regex.stringByReplacingMatches(
+            in: html,
+            range: NSRange(html.startIndex..., in: html),
+            withTemplate: "<$1$2></$1>"
+        )
     }
 
     /// Finds <link rel="stylesheet" href="..."> in the HTML head and collects

@@ -104,33 +104,19 @@ struct ReaderContainerView: View {
             // Set initial progress from saved state so the title shows it immediately.
             displayedProgress = book?.progress
             readerTitle = windowTitle
-            setSceneTitle(windowTitle)
             library.registerReaderProgressObservation(for: bookID)
         }
         .onDisappear {
+            // The library screen's title takes over again.
             readerTitle = nil
-            // Restore the library title when leaving the reader.
-            let libraryTitle = ContentView.windowTitle(for: library.trackingDirectoryURL)
-            setSceneTitle(libraryTitle)
         }
-        // Update the Mac Catalyst window title whenever progress changes.
+        // Keep the window title's progress readout current.
         .onChange(of: displayedProgress) {
-            let title = windowTitle
-            readerTitle = title
-            setSceneTitle(title)
+            readerTitle = windowTitle
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             library.synchronizeReaderProgressIfNeeded(for: bookID)
         }
-    }
-
-    /// Directly sets the Mac Catalyst window title via UIKit, because
-    /// SwiftUI's .navigationTitle on a pushed view does not update the title bar.
-    private func setSceneTitle(_ title: String) {
-        #if targetEnvironment(macCatalyst)
-            guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
-            scene.title = title
-        #endif
     }
 }

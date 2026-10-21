@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var library = LibraryModel()
+    @EnvironmentObject private var library: LibraryModel
     @StateObject private var browser = LibraryBrowserState()
     @State private var showingSettings = false
     @State private var isPickingTrackingDirectory = false
@@ -51,6 +51,9 @@ struct ContentView: View {
                 }
             }
         }
+        // Applied outside the stack: UIKit detaches the root screen's views while
+        // a reader is pushed, so a setter inside it would stop updating.
+        .sceneTitle(readerTitle ?? Self.windowTitle(for: library.trackingDirectoryURL))
         .overlay {
             if library.isLoading {
                 ProgressView("Scanning library…")

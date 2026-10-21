@@ -118,11 +118,11 @@ enum EPUBPreparation {
 /// Combines all EPUB spine chapters into a single HTML document for continuous scrolling.
 /// Each chapter's body content is extracted, resource paths are rewritten to be relative
 /// to the extraction root, and everything is wrapped in chapter dividers.
-/// The result is cached as `_combined-v6.html` in the extraction directory — it's automatically
+/// The result is cached as `_combined-v7.html` in the extraction directory — it's automatically
 /// invalidated when the EPUB is re-extracted (the directory is wiped on version change).
 enum EPUBCombiner {
     /// Builds (or returns cached) combined HTML from all spine items.
-    /// - Returns: URL of the `_combined-v6.html` file in the extraction directory.
+    /// - Returns: URL of the `_combined-v7.html` file in the extraction directory.
     static func buildCombinedHTML(
         spine: [EPUBDocument.SpineItem],
         extractedRootURL: URL
@@ -130,7 +130,7 @@ enum EPUBCombiner {
         // The filename carries a layout version suffix so that bumping the reading
         // CSS below regenerates the combined document for already-extracted books
         // (rebuilding from the cached chapters is cheap — no re-unzip required).
-        let combinedURL = extractedRootURL.appending(path: "_combined-v6.html")
+        let combinedURL = extractedRootURL.appending(path: "_combined-v7.html")
 
         // If the combined file already exists (from a previous open), reuse it.
         if FileManager.default.fileExists(atPath: combinedURL.path()) {
@@ -138,7 +138,7 @@ enum EPUBCombiner {
         }
 
         var stylesheetPaths: [String] = []
-        var chapterBodies: [(index: Int, html: String)] = []
+        var chapterBodies: [(index: Int, path: String, html: String)] = []
 
         let rootPath = extractedRootURL.path()
 
@@ -150,13 +150,16 @@ enum EPUBCombiner {
             // Compute the chapter's directory relative to the extraction root,
             // so we can prefix relative resource paths (images, CSS, etc.).
             let chapterDir: String
+            let chapterRelativePath: String
             let chapterFilePath = item.url.path()
             if chapterFilePath.hasPrefix(rootPath) {
                 let relativePath = String(chapterFilePath.dropFirst(rootPath.count).drop(while: { $0 == "/" }))
                 let components = relativePath.split(separator: "/").dropLast()
                 chapterDir = components.isEmpty ? "" : components.joined(separator: "/") + "/"
+                chapterRelativePath = relativePath
             } else {
                 chapterDir = ""
+                chapterRelativePath = item.url.lastPathComponent
             }
 
             // Collect <link rel="stylesheet"> hrefs from the chapter's <head>.
@@ -171,7 +174,7 @@ enum EPUBCombiner {
             // Add lazy loading to images so off-screen content doesn't consume memory.
             rewritten = addLazyLoading(to: rewritten)
 
-            chapterBodies.append((index: item.index, html: rewritten))
+            chapterBodies.append((index: item.index, path: chapterRelativePath, html: rewritten))
         }
 
         // Build the combined HTML document.
@@ -331,7 +334,10 @@ enum EPUBCombiner {
             if offset > 0 {
                 html += "<div class=\"epub-chapter-divider\"></div>\n"
             }
-            html += "<div id=\"chapter-\(chapter.index)\" class=\"epub-chapter\" data-chapter-index=\"\(chapter.index)\">\n"
+            // `data-chapter-path` (relative to the extraction root) lets the reader map
+            // cross-chapter links like `ch2.xhtml#sec` onto this div.
+            html +=
+                "<div id=\"chapter-\(chapter.index)\" class=\"epub-chapter\" data-chapter-index=\"\(chapter.index)\" data-chapter-path=\"\(escapeHTMLAttribute(chapter.path))\">\n"
             html += chapter.html
             html += "\n</div>\n"
         }

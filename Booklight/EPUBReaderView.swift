@@ -133,10 +133,11 @@ final class EPUBScrollProxy: ObservableObject {
         webView?.evaluateJavaScript("window.scrollBy(0, -window.innerHeight * 0.9)")
     }
 
-    /// Jump back to the previous web navigation state when available.
+    /// Jump back to where the reader was before the last followed internal link.
+    /// Links never navigate the web view (see `linkScript`), so this pops the
+    /// in-page jump stack instead of using WebKit's history.
     func jumpBack() {
-        guard let webView, webView.canGoBack else { return }
-        webView.goBack()
+        webView?.evaluateJavaScript("window.readerJumpBack && window.readerJumpBack();")
     }
 
     // MARK: - Font size
@@ -486,6 +487,12 @@ private struct EPUBWebView: UIViewRepresentable {
                 injectionTime: .atDocumentEnd,
                 forMainFrameOnly: true
             ))
+        contentController.addUserScript(
+            WKUserScript(
+                source: Self.linkScript,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true
+            ))
         configuration.userContentController = contentController
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -618,6 +625,86 @@ private struct EPUBWebView: UIViewRepresentable {
                     match.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
             };
+        })();
+        """
+
+    // MARK: - JavaScript for internal links
+
+    /// Keeps link navigation inside the combined document. EPUB links point at
+    /// individual chapter files (`ch2.xhtml#sec`) or at fragments within the
+    /// current chapter (`#note1`); following them natively would load the raw
+    /// chapter file and lose the combined layout and progress tracking. Instead
+    /// we scroll to the matching element inside the right `.epub-chapter` div,
+    /// remembering the previous position so Cmd+[ can jump back.
+    static let linkScript = """
+        (function() {
+            const jumpStack = [];
+
+            // Absolute, decoded paths of each chapter's original file, resolved
+            // against the combined document's location.
+            const chapterPaths = new Map();
+            document.querySelectorAll('.epub-chapter[data-chapter-path]').forEach((el) => {
+                try {
+                    const path = decodeURIComponent(new URL(el.dataset.chapterPath, document.baseURI).pathname);
+                    chapterPaths.set(path, el);
+                } catch (e) {}
+            });
+
+            const findTarget = (chapter, fragment) => {
+                if (!fragment) return chapter;
+                const scope = chapter || document;
+                const escaped = CSS.escape(fragment);
+                return scope.querySelector('#' + escaped)
+                    || scope.querySelector('[name="' + escaped + '"]')
+                    || document.getElementById(fragment)
+                    || chapter;
+            };
+
+            window.readerJumpTo = (chapter, fragment) => {
+                const target = findTarget(chapter, fragment);
+                if (!target) return false;
+                jumpStack.push(window.computeCenterProgress());
+                target.scrollIntoView({ block: 'start' });
+                return true;
+            };
+
+            window.readerJumpToChapterIndex = (index, fragment) => {
+                return window.readerJumpTo(document.getElementById('chapter-' + index), fragment);
+            };
+
+            window.readerJumpBack = () => {
+                const previous = jumpStack.pop();
+                if (previous) window.restoreCenterProgress(previous);
+            };
+
+            document.addEventListener('click', (event) => {
+                const link = event.target.closest ? event.target.closest('a[href]') : null;
+                if (!link) return;
+                const href = link.getAttribute('href');
+                if (!href) return;
+
+                // Same-chapter fragment: scope the lookup to the enclosing chapter
+                // because ids are only unique per chapter, not per combined book.
+                if (href.startsWith('#')) {
+                    event.preventDefault();
+                    let fragment = href.slice(1);
+                    try { fragment = decodeURIComponent(fragment); } catch (e) {}
+                    window.readerJumpTo(link.closest('.epub-chapter'), fragment);
+                    return;
+                }
+
+                let url;
+                try { url = new URL(href, document.baseURI); } catch (e) { return; }
+                // Non-file links (http, mailto) are handed to the system by native code.
+                if (url.protocol !== 'file:') return;
+
+                event.preventDefault();
+                const chapter = chapterPaths.get(decodeURIComponent(url.pathname));
+                if (!chapter) return;
+                let fragment = url.hash ? url.hash.slice(1) : '';
+                try { fragment = decodeURIComponent(fragment); } catch (e) {}
+                window.readerJumpTo(chapter, fragment);
+            }, true);
         })();
         """
 
@@ -767,8 +854,42 @@ private struct EPUBWebView: UIViewRepresentable {
 
         // MARK: WKNavigationDelegate
 
+        /// Only the combined document itself may load in the web view. The link
+        /// script handles internal links in-page; this is the native safety net for
+        /// anything it misses, and the hand-off point for external links.
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+            guard let url = navigationAction.request.url else { return .cancel }
+
+            if url.isFileURL {
+                let combinedPath = document.combinedHTMLURL.standardizedFileURL.resolvingSymlinksInPath().path
+                let targetPath = url.standardizedFileURL.resolvingSymlinksInPath().path
+                if targetPath == combinedPath {
+                    return .allow
+                }
+                // A link to a chapter file slipped past the script: jump in-page.
+                if let chapter = document.spine.first(where: {
+                    $0.url.standardizedFileURL.resolvingSymlinksInPath().path == targetPath
+                }) {
+                    _ = try? await webView.callAsyncJavaScript(
+                        "window.readerJumpToChapterIndex && window.readerJumpToChapterIndex(index, fragment);",
+                        arguments: ["index": chapter.index, "fragment": url.fragment ?? ""],
+                        contentWorld: .page
+                    )
+                }
+                return .cancel
+            }
+
+            // External links open in the default browser; the reader stays offline.
+            if navigationAction.navigationType == .linkActivated, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
+                await UIApplication.shared.open(url)
+            }
+            return .cancel
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard let target = pendingScrollTarget else { return }
+            // Consume the target so it is applied only once per document load.
+            pendingScrollTarget = nil
             isDocumentReadyForExternalScroll = false
 
             // Apply saved font size FIRST so the DOM reflows before we compute

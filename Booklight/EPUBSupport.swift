@@ -567,37 +567,42 @@ private enum EPUBArchiveExtractor {
         let eocdSignature: UInt32 = 0x06054b50
         let centralSignature: UInt32 = 0x02014b50
 
+        // The end-of-central-directory record is 22 bytes plus an optional comment
+        // of up to 64 KiB, so it must start within the last 65,557 bytes.
+        guard data.count >= 22 else {
+            throw EPUBError.invalidArchive
+        }
         let lowerBound = max(0, data.count - 65_557)
         guard
             let eocdOffset = stride(from: data.count - 22, through: lowerBound, by: -1).first(where: {
-                data.uint32LE(at: $0) == eocdSignature
+                (try? data.uint32LE(at: $0)) == eocdSignature
             })
         else {
             throw EPUBError.invalidArchive
         }
 
-        let entryCount = Int(data.uint16LE(at: eocdOffset + 10))
-        let centralDirectoryOffset = Int(data.uint32LE(at: eocdOffset + 16))
+        let entryCount = Int(try data.uint16LE(at: eocdOffset + 10))
+        let centralDirectoryOffset = Int(try data.uint32LE(at: eocdOffset + 16))
 
         var cursor = centralDirectoryOffset
         var entries: [Entry] = []
         entries.reserveCapacity(entryCount)
 
         for _ in 0 ..< entryCount {
-            guard data.uint32LE(at: cursor) == centralSignature else {
+            guard try data.uint32LE(at: cursor) == centralSignature else {
                 throw EPUBError.invalidArchive
             }
 
-            let compressionMethod = data.uint16LE(at: cursor + 10)
-            let compressedSize = Int(data.uint32LE(at: cursor + 20))
-            let uncompressedSize = Int(data.uint32LE(at: cursor + 24))
-            let fileNameLength = Int(data.uint16LE(at: cursor + 28))
-            let extraFieldLength = Int(data.uint16LE(at: cursor + 30))
-            let commentLength = Int(data.uint16LE(at: cursor + 32))
-            let localHeaderOffset = Int(data.uint32LE(at: cursor + 42))
+            let compressionMethod = try data.uint16LE(at: cursor + 10)
+            let compressedSize = Int(try data.uint32LE(at: cursor + 20))
+            let uncompressedSize = Int(try data.uint32LE(at: cursor + 24))
+            let fileNameLength = Int(try data.uint16LE(at: cursor + 28))
+            let extraFieldLength = Int(try data.uint16LE(at: cursor + 30))
+            let commentLength = Int(try data.uint16LE(at: cursor + 32))
+            let localHeaderOffset = Int(try data.uint32LE(at: cursor + 42))
 
             let fileNameOffset = cursor + 46
-            let fileNameData = data.subdata(in: fileNameOffset ..< (fileNameOffset + fileNameLength))
+            let fileNameData = try data.checkedSubdata(offset: fileNameOffset, length: fileNameLength)
             let fileName = String(data: fileNameData, encoding: .utf8) ?? String(data: fileNameData, encoding: .isoLatin1) ?? ""
 
             entries.append(
@@ -619,15 +624,14 @@ private enum EPUBArchiveExtractor {
     private static func data(for entry: Entry, in archiveData: Data) throws -> Data {
         let localSignature: UInt32 = 0x04034b50
         let localHeaderOffset = entry.localHeaderOffset
-        guard archiveData.uint32LE(at: localHeaderOffset) == localSignature else {
+        guard try archiveData.uint32LE(at: localHeaderOffset) == localSignature else {
             throw EPUBError.invalidArchive
         }
 
-        let fileNameLength = Int(archiveData.uint16LE(at: localHeaderOffset + 26))
-        let extraFieldLength = Int(archiveData.uint16LE(at: localHeaderOffset + 28))
+        let fileNameLength = Int(try archiveData.uint16LE(at: localHeaderOffset + 26))
+        let extraFieldLength = Int(try archiveData.uint16LE(at: localHeaderOffset + 28))
         let payloadOffset = localHeaderOffset + 30 + fileNameLength + extraFieldLength
-        let payloadRange = payloadOffset ..< (payloadOffset + entry.compressedSize)
-        let payload = archiveData.subdata(in: payloadRange)
+        let payload = try archiveData.checkedSubdata(offset: payloadOffset, length: entry.compressedSize)
 
         switch entry.compressionMethod {
         case 0:
@@ -799,13 +803,25 @@ private final class MutablePackageParser: NSObject, XMLParserDelegate {
     }
 }
 
+/// Bounds-checked little-endian readers. Archives can be truncated (e.g. a file
+/// still being synced) or malformed, and an unchecked `Data` subscript past the
+/// end traps and crashes the app instead of surfacing an error.
 private extension Data {
-    func uint16LE(at offset: Int) -> UInt16 {
-        UInt16(self[offset]) | (UInt16(self[offset + 1]) << 8)
+    func uint16LE(at offset: Int) throws -> UInt16 {
+        guard offset >= 0, offset <= count - 2 else { throw EPUBError.invalidArchive }
+        let base = startIndex + offset
+        return UInt16(self[base]) | (UInt16(self[base + 1]) << 8)
     }
 
-    func uint32LE(at offset: Int) -> UInt32 {
-        UInt32(self[offset]) | (UInt32(self[offset + 1]) << 8) | (UInt32(self[offset + 2]) << 16) | (UInt32(self[offset + 3]) << 24)
+    func uint32LE(at offset: Int) throws -> UInt32 {
+        guard offset >= 0, offset <= count - 4 else { throw EPUBError.invalidArchive }
+        let base = startIndex + offset
+        return UInt32(self[base]) | (UInt32(self[base + 1]) << 8) | (UInt32(self[base + 2]) << 16) | (UInt32(self[base + 3]) << 24)
+    }
+
+    func checkedSubdata(offset: Int, length: Int) throws -> Data {
+        guard offset >= 0, length >= 0, offset <= count - length else { throw EPUBError.invalidArchive }
+        return subdata(in: (startIndex + offset) ..< (startIndex + offset + length))
     }
 }
 

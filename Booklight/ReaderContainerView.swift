@@ -14,6 +14,10 @@ struct ReaderContainerView: View {
     @State private var showBackButton = false
     /// Reading progress (0.0–1.0) shown in the window title.
     @State private var displayedProgress: Double?
+    /// The file the reader opened. Opening copies the book into the tracking
+    /// directory in the background, which changes `book.fileURL`; pinning the
+    /// original avoids reloading the document mid-read when the copy lands.
+    @State private var openedURL: URL?
 
     private var book: Book? {
         library.book(withID: bookID)
@@ -44,7 +48,7 @@ struct ReaderContainerView: View {
                     case .pdf:
                         PDFBookView(
                             book: book,
-                            bookURL: book.fileURL,
+                            bookURL: openedURL ?? book.fileURL,
                             library: library,
                             displayedProgress: $displayedProgress,
                             syncToken: library.readerSyncToken(for: bookID)
@@ -52,7 +56,7 @@ struct ReaderContainerView: View {
                     case .epub:
                         EPUBBookView(
                             book: book,
-                            bookURL: book.fileURL,
+                            bookURL: openedURL ?? book.fileURL,
                             library: library,
                             displayedProgress: $displayedProgress,
                             syncToken: library.readerSyncToken(for: bookID)
@@ -103,6 +107,9 @@ struct ReaderContainerView: View {
         .onAppear {
             // Set initial progress from saved state so the title shows it immediately.
             displayedProgress = book?.progress
+            if openedURL == nil {
+                openedURL = book?.fileURL
+            }
             readerTitle = windowTitle
             library.registerReaderProgressObservation(for: bookID)
         }

@@ -73,72 +73,58 @@ struct BookThumbnailView: View {
 
     private func loadThumbnail() async {
         guard let fileURL else {
-            await MainActor.run {
-                image = nil
-            }
+            image = nil
             return
         }
 
-        let nsCacheKey = bookID as NSString
+        let loaded = await ThumbnailLoader.thumbnail(bookID: bookID, fileURL: fileURL, scale: displayScale)
+        guard !Task.isCancelled else { return }
+        image = loaded
+    }
+}
 
-        if let cached = await MainActor.run(body: {
-            BookThumbnailCache.cache.object(forKey: nsCacheKey)
-        }) {
-            await MainActor.run {
-                image = cached
-            }
-            return
+/// Produces book cover thumbnails: memory cache, then the on-disk cache, then
+/// QuickLook generation. Runs off the main actor so disk reads, image decoding
+/// and PNG encoding don't stall scrolling.
+enum ThumbnailLoader {
+    /// NSCache is thread-safe; it's only unchecked because it isn't annotated.
+    private nonisolated(unsafe) static let memoryCache = NSCache<NSString, UIImage>()
+
+    nonisolated static func thumbnail(bookID: String, fileURL: URL, scale: CGFloat) async -> UIImage? {
+        let cacheKey = bookID as NSString
+        if let cached = memoryCache.object(forKey: cacheKey) {
+            return cached
         }
 
-        let urls = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
-        let thumbnailsDir = urls[0].appending(path: "com.anatol.Booklight/thumbnails", directoryHint: .isDirectory)
+        let thumbnailsDir = AppPaths.cacheDirectory.appending(path: "thumbnails", directoryHint: .isDirectory)
         let diskURL = thumbnailsDir.appending(path: "\(bookID).png")
 
-        if let data = try? Data(contentsOf: diskURL), let uiImage = UIImage(data: data) {
-            await MainActor.run {
-                BookThumbnailCache.cache.setObject(uiImage, forKey: nsCacheKey)
-                image = uiImage
-            }
-            return
+        // Decode now (not lazily at first draw on the main thread).
+        if let data = try? Data(contentsOf: diskURL), let decoded = UIImage(data: data)?.preparingForDisplay() {
+            memoryCache.setObject(decoded, forKey: cacheKey)
+            return decoded
         }
 
         let request = QLThumbnailGenerator.Request(
             fileAt: fileURL,
             size: CGSize(width: 520, height: 760),
-            scale: displayScale,
+            scale: scale,
             representationTypes: .all
         )
         request.iconMode = false
         request.minimumDimension = 260
 
-        do {
-            let representation = try await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
-            let generatedImage = representation.uiImage
-
-            if let pngData = generatedImage.pngData() {
-                try? FileManager.default.createDirectory(at: thumbnailsDir, withIntermediateDirectories: true)
-                try? pngData.write(to: diskURL, options: .atomic)
-            }
-
-            await MainActor.run {
-                BookThumbnailCache.cache.setObject(generatedImage, forKey: nsCacheKey)
-            }
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                image = generatedImage
-            }
-        } catch {
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                image = nil
-            }
+        guard let representation = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) else {
+            return nil
         }
+        let generated = representation.uiImage
+        if let pngData = generated.pngData() {
+            try? FileManager.default.createDirectory(at: thumbnailsDir, withIntermediateDirectories: true)
+            try? pngData.write(to: diskURL, options: .atomic)
+        }
+        memoryCache.setObject(generated, forKey: cacheKey)
+        return generated
     }
-}
-
-@MainActor
-private enum BookThumbnailCache {
-    static let cache = NSCache<NSString, UIImage>()
 }
 
 private struct SVGResourceView: UIViewRepresentable {

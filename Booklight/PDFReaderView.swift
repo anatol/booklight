@@ -15,9 +15,12 @@ final class PDFScrollProxy {
     var searchSelections: [PDFSelection] = []
     /// Zero-based index of the currently highlighted match.
     var searchCurrentIndex: Int = 0
+    /// True while PDFKit is still scanning the document for matches.
+    var isSearchInProgress = false
     /// The text that was last searched, used to detect whether a new search
     /// is needed or we can just navigate between existing results.
     var lastSearchText: String = ""
+    @ObservationIgnored private var findObservers: [NSObjectProtocol] = []
 
     // MARK: - Position save/restore (for returning to pre-search position)
 
@@ -60,13 +63,18 @@ final class PDFScrollProxy {
 
     /// Performs a case-insensitive search across the entire PDF document.
     /// Highlights all matches in yellow and navigates to the first one.
+    ///
+    /// Uses PDFKit's asynchronous find: the synchronous `findString` blocks the
+    /// main thread for seconds on large books. Matches stream in as they are
+    /// found; the first one is shown immediately.
     func search(for text: String) {
         guard let pdfView, let document = pdfView.document else {
             clearSearch()
             return
         }
 
-        // Clear previous highlights.
+        // Clear previous highlights and stop any search still running.
+        cancelFind()
         pdfView.highlightedSelections = nil
         pdfView.clearSelection()
         searchSelections = []
@@ -75,14 +83,49 @@ final class PDFScrollProxy {
 
         guard !text.isEmpty else { return }
 
-        let results = document.findString(text, withOptions: [.caseInsensitive])
-        searchSelections = results
+        let center = NotificationCenter.default
+        findObservers = [
+            center.addObserver(forName: .PDFDocumentDidFindMatch, object: document, queue: .main) { [weak self] notification in
+                // Delivered on the main queue (see `queue:`), so the selection
+                // never actually crosses threads.
+                nonisolated(unsafe) let selection = notification.userInfo?["PDFDocumentFoundSelection"] as? PDFSelection
+                MainActor.assumeIsolated {
+                    guard let self, let selection else { return }
+                    self.searchSelections.append(selection)
+                    if self.searchSelections.count == 1 {
+                        self.pdfView?.highlightedSelections = [selection]
+                        self.goToMatch(0)
+                    }
+                }
+            },
+            center.addObserver(forName: .PDFDocumentDidEndFind, object: document, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.isSearchInProgress = false
+                    self.removeFindObservers()
+                    // Highlight everything once, rather than on every match.
+                    if !self.searchSelections.isEmpty {
+                        self.pdfView?.highlightedSelections = self.searchSelections
+                    }
+                }
+            },
+        ]
+        isSearchInProgress = true
+        document.beginFindString(text, withOptions: [.caseInsensitive])
+    }
 
-        if !results.isEmpty {
-            // Show all matches as yellow highlights.
-            pdfView.highlightedSelections = results
-            goToMatch(0)
+    /// Stops an in-progress asynchronous find.
+    private func cancelFind() {
+        if isSearchInProgress {
+            pdfView?.document?.cancelFindString()
+            isSearchInProgress = false
         }
+        removeFindObservers()
+    }
+
+    private func removeFindObservers() {
+        findObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        findObservers.removeAll()
     }
 
     /// Navigates to the next search match, wrapping around at the end.
@@ -102,6 +145,7 @@ final class PDFScrollProxy {
     /// Clears all search highlights and resets search state.
     /// Does NOT clear `lastSearchText` so it persists for the next search open.
     func clearSearch() {
+        cancelFind()
         pdfView?.highlightedSelections = nil
         pdfView?.clearSelection()
         searchSelections = []
@@ -236,6 +280,7 @@ struct PDFBookView: View {
                     searchText: $searchText,
                     matchCount: scrollProxy.searchSelections.count,
                     currentMatchIndex: scrollProxy.searchCurrentIndex,
+                    isSearching: scrollProxy.isSearchInProgress,
                     hasActiveSearch: !scrollProxy.lastSearchText.isEmpty
                         && scrollProxy.lastSearchText == searchText,
                     onSearchOrNext: { handleSearchOrNext() },

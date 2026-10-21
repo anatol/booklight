@@ -237,19 +237,28 @@ final class LibraryModel {
             return
         }
 
-        do {
-            let trackedURL = try shelf.ensureTracked(incomingBook)
-            if trackedURL != incomingBook.fileURL, let index = books.firstIndex(where: { $0.id == incomingBook.id }) {
-                // Point at the copy right away instead of waiting for the next scan.
-                books[index].fileURL = trackedURL
-            }
+        // Stamp the open right away (before any reading position is saved) so
+        // the copy below can't race with, and overwrite, newer positions.
+        var state = book(withID: incomingBook.id)?.progressState ?? incomingBook.progressState ?? .initial(bookID: incomingBook.id)
+        state.updatedAt = .now
+        state.lastOpenedAt = .now
+        record(state)
 
-            var state = incomingBook.progressState ?? .initial(bookID: incomingBook.id)
-            state.updatedAt = .now
-            state.lastOpenedAt = .now
-            record(state)
-        } catch {
-            errorMessage = error.localizedDescription
+        // Copying a large book from a slow drive can take seconds; keep it off
+        // the main thread. The reader keeps using the original until then.
+        Task { [weak self] in
+            do {
+                let trackedURL = try await Task.detached(priority: .utility) {
+                    try shelf.ensureTracked(incomingBook)
+                }.value
+                guard let self, trackedURL != incomingBook.fileURL,
+                    let index = self.books.firstIndex(where: { $0.id == incomingBook.id })
+                else { return }
+                // Point at the copy right away instead of waiting for the next scan.
+                self.books[index].fileURL = trackedURL
+            } catch {
+                self?.errorMessage = error.localizedDescription
+            }
         }
     }
 

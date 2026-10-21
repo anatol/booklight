@@ -12,6 +12,8 @@ struct ReaderSearchBar: View {
     let matchCount: Int
     /// Zero-based index of the currently highlighted match.
     let currentMatchIndex: Int
+    /// True while matches are still being collected (PDF search is incremental).
+    var isSearching = false
     /// Whether a search has been performed for the current text (controls status label).
     let hasActiveSearch: Bool
     /// Called when Enter is pressed — performs search if text changed, or navigates to next match.
@@ -43,8 +45,8 @@ struct ReaderSearchBar: View {
             if hasActiveSearch && !searchText.isEmpty {
                 Text(
                     matchCount > 0
-                        ? "\(currentMatchIndex + 1) of \(matchCount)"
-                        : "No matches"
+                        ? "\(currentMatchIndex + 1) of \(matchCount)\(isSearching ? "…" : "")"
+                        : (isSearching ? "Searching…" : "No matches")
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

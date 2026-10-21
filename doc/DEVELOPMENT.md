@@ -66,21 +66,30 @@ Notes:
 
 ## Architecture
 
-Booklight is a single-target SwiftUI app (~2,200 lines of Swift) that runs on iPadOS and macOS via Mac Catalyst.
+Booklight is a single-target SwiftUI app (~6,000 lines of Swift) that runs on iPadOS and macOS via Mac Catalyst.
 
 ### Key Components
 
 | File | Role |
 |------|------|
-| `LibraryController.swift` | Core library management: folder scanning, book discovery, progress tracking, state persistence |
+| `Library/LibraryModel.swift` | `@Observable` app-wide library state: books, refresh, progress saving, error reporting. One instance is shared by all windows |
+| `Library/LibraryBrowserState.swift` | Per-window search text, sort order and memoized sections |
+| `Library/LibraryScanner.swift` | Actor that finds PDF/EPUB files, hashes them (cached) and deduplicates by content |
+| `Library/ProgressStore.swift` | Actor that reads/writes per-book progress JSON (debounced, merge-on-write) |
+| `Library/ActiveShelf.swift` | Copies active books into the tracking directory's `books/` |
+| `Library/DirectoryMonitor.swift` | File-system events (plus a slow fallback poll) that trigger refreshes |
+| `Library/FolderAccess.swift`, `TrackingLayout.swift` | Security-scoped bookmarks and the tracking-directory layout |
+| `Library/LibrarySearch.swift` | Fuzzy title matching and sorting |
 | `Models.swift` | Data types: `Book`, `BookProgressState`, `BookFormat`, hash-cache records, PDF reading position |
-| `ContentView.swift` | Main library UI with search and Active Books / All Books sections |
-| `PDFReaderView.swift` | PDF reading via PDFKit |
-| `EPUBReaderView.swift` | EPUB reading via WKWebView |
-| `EPUBSupport.swift` | EPUB ZIP extraction and package parsing |
-| `BookArtwork.swift` | Book cover/artwork extraction and caching |
-| `ReaderContainerView.swift` | Container view wrapping the format-specific readers |
-| `ReaderSearch.swift` | Shared search bar UI used by both PDF and EPUB readers |
+| `ContentView.swift` | Library UI (gallery, context menus, empty states, settings) and navigation by book ID |
+| `Reader/ReaderEngine.swift` | `ReaderEngine` protocol (search, position, navigation, contents) and `ReaderSession` UI state |
+| `Reader/ReaderScaffold.swift`, `ReaderChrome.swift` | Shared reader chrome: corner buttons, scrubber, find bar, contents sheet |
+| `Reader/ReaderTheme.swift` | Light / sepia / dark reading themes |
+| `Reader/PDFReaderView.swift` | PDF reading via PDFKit |
+| `Reader/EPUBReaderView.swift` | EPUB reading via WKWebView (one combined document, injected scripts) |
+| `EPUBSupport.swift` | EPUB ZIP extraction, package/contents parsing and combined-HTML generation |
+| `BookArtwork.swift` | Cover thumbnails (off-main, memory + disk cache) |
+| `SceneTitle.swift` | Per-window title on Mac Catalyst |
 | `BooklightApp.swift` | App entry point |
 
 ### Data Persistence
@@ -103,33 +112,40 @@ When two devices have conflicting progress for the same book, the state with the
 ### Project Layout
 
 ```text
-Booklight.xcodeproj
-Booklight/
-  BooklightApp.swift
-  ContentView.swift
-  LibraryController.swift
-  Models.swift
-  ReaderContainerView.swift
-  PDFReaderView.swift
-  EPUBReaderView.swift
-  EPUBSupport.swift
-  BookArtwork.swift
-  ReaderSearch.swift
+Booklight.xcodeproj          # Booklight/ and BooklightTests/ are synchronized folders:
+Booklight/                   # new files are picked up without editing the project
+  BooklightApp.swift, ContentView.swift, Models.swift, EPUBSupport.swift,
+  BookArtwork.swift, SceneTitle.swift
+  Library/                   # scanning, progress, monitoring, search
+  Reader/                    # PDF/EPUB readers and shared reader chrome
   Assets.xcassets/
+BooklightTests/              # unit tests
 doc/
   DEVELOPMENT.md
 ```
 
 ## Testing
 
-### Current Status
+### Automated Tests
 
-There are focused unit tests for progress normalization, merge policy, canonical progress filenames, path containment, and library sorting. Broader reader and UI workflows are still validated manually.
+Run the unit tests on an iPad simulator (the same command CI uses):
 
-Suggested areas for future automated tests:
+```bash
+xcodebuild -project Booklight.xcodeproj -scheme Booklight \
+  -destination 'platform=iOS Simulator,name=iPad Air 11-inch (M4)' \
+  -derivedDataPath /tmp/BooklightDerived-test test
+```
 
-- Unit tests for EPUB package parsing in `EPUBSupport`
-- UI smoke tests for library selection, search, and opening a book
+They cover progress normalization and merging, the progress store and library scanner against temporary folders, fuzzy search and sorting, the ZIP extractor (stored and deflated entries, truncated and malicious archives), EPUB package/contents parsing against generated fixtures, the combined-HTML helpers, and PDF search. UI workflows are still validated manually.
+
+### Debug Launch Arguments
+
+Debug builds accept these arguments so the app can be driven without folder pickers:
+
+- `-BooklightTrackingDir <path>` and `-BooklightLibraryDir <path>` use plain folders instead of bookmarks.
+- `-BooklightOpenBook <title substring>` opens the first matching book on launch.
+
+Use a separate bundle identifier (for example `PRODUCT_BUNDLE_IDENTIFIER=com.example.Booklight.dev`) for such runs so they never touch an installed copy.
 
 ### Manual Test Setup
 
@@ -297,11 +313,10 @@ brew install anatol/tap/booklight   # or: brew upgrade booklight
 
 ## Known Limitations
 
-- No automated tests — validation is compile-time and manual only
+- Reader and UI behavior is verified manually; only the model, parsing and storage layers have unit tests
 - EPUB rendering is intentionally minimal (local ZIP extraction + WKWebView)
 - In-document search finds matches within single text nodes only (cross-element matches like `<b>hel</b>lo` are not detected)
-- The app assumes a flat library directory (no nested subfolders)
-- Book identity is filename-based — renaming a file looks like a new book
+- Book identity is content-based (SHA-256), so renaming a file keeps its progress but editing it creates a new book
 
 ## Troubleshooting
 

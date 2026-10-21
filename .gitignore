@@ -24,3 +24,7 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/
 fastlane/test_output/
+
+# Books used for manual testing must never be committed
+*.epub
+*.pdf

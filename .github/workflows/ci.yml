@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit tests (iPad simulator)
+        run: |
+          xcodebuild -project Booklight.xcodeproj -scheme Booklight \
+            -destination 'platform=iOS Simulator,name=iPad Air 11-inch (M4)' \
+            -derivedDataPath /tmp/BooklightDerived-test \
+            CODE_SIGNING_ALLOWED=NO test
+
+      - name: Build for Mac Catalyst
+        run: |
+          xcodebuild -project Booklight.xcodeproj -scheme Booklight \
+            -destination 'generic/platform=macOS,variant=Mac Catalyst' \
+            -derivedDataPath /tmp/BooklightDerived-catalyst \
+            CODE_SIGNING_ALLOWED=NO build

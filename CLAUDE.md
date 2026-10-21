@@ -22,7 +22,13 @@ Use `-derivedDataPath /tmp/...` to avoid permissions issues. `CODE_SIGNING_ALLOW
 
 ## Tests
 
-No automated tests exist yet. Validation is compile-time only via `xcodebuild`.
+Unit tests live in `BooklightTests/` (XCTest, hosted in the app). Run them on an iPad simulator:
+
+```bash
+xcodebuild -project Booklight.xcodeproj -scheme Booklight -destination 'platform=iOS Simulator,name=iPad Air 11-inch (M4)' -derivedDataPath /tmp/BooklightDerived-test test
+```
+
+Add tests for model, parsing and storage changes. UI changes are verified by running the app (Mac Catalyst) — check both PDF and EPUB, windowed and full screen.
 
 ## Full Developer Documentation
 

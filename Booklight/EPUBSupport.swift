@@ -80,7 +80,7 @@ enum EPUBPreparation {
         return try parseExtractedBook(at: extractedRoot, fallbackTitle: book.title)
     }
 
-    private static func parseExtractedBook(at extractedRoot: URL, fallbackTitle: String) throws -> EPUBDocument {
+    static func parseExtractedBook(at extractedRoot: URL, fallbackTitle: String) throws -> EPUBDocument {
         let containerURL = extractedRoot.appending(path: "META-INF/container.xml")
         let container = try ContainerDocument.parse(url: containerURL)
         guard let rootFilePath = container.rootFilePath else {
@@ -131,6 +131,8 @@ enum EPUBPreparation {
 }
 
 // MARK: - Combined HTML Generator
+
+// The helpers below are internal (not private) so unit tests can exercise them directly.
 
 /// Combines all EPUB spine chapters into a single HTML document for continuous scrolling.
 /// Each chapter's body content is extracted, resource paths are rewritten to be relative
@@ -387,7 +389,7 @@ enum EPUBCombiner {
 
     /// Extracts the inner content of the <body> element.
     /// Falls back to the full content if no <body> tag is found (some EPUBs omit it).
-    private static func extractBody(from html: String) -> String {
+    static func extractBody(from html: String) -> String {
         // Find opening <body...> tag (case-insensitive).
         guard let bodyOpenRange = html.range(of: "<body[^>]*>", options: [.regularExpression, .caseInsensitive]) else {
             return html
@@ -413,7 +415,7 @@ enum EPUBCombiner {
     /// column (nested ones compounded down to a word per line), and empty anchors
     /// turned the following text into a link.
     /// Void elements (img, br, hr, …) are left alone since HTML handles them.
-    private static func expandSelfClosingTags(in html: String) -> String {
+    static func expandSelfClosingTags(in html: String) -> String {
         let pattern =
             #"<(?!(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b)([A-Za-z][A-Za-z0-9:_-]*)((?:\s[^<>]*?)?)\s*/>"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
@@ -428,7 +430,7 @@ enum EPUBCombiner {
 
     /// Finds <link rel="stylesheet" href="..."> in the HTML head and collects
     /// their hrefs (prefixed with chapterDir for correct resolution).
-    private static func collectStylesheets(
+    static func collectStylesheets(
         from html: String,
         chapterDir: String,
         into paths: inout [String]
@@ -459,7 +461,7 @@ enum EPUBCombiner {
     /// Rewrites relative `src` and `href` attribute values by prefixing them with the
     /// chapter's directory path. Skips absolute URLs, data URIs, fragment-only refs,
     /// and stylesheet links (handled separately).
-    private static func rewriteResourcePaths(in html: String, chapterDir: String) -> String {
+    static func rewriteResourcePaths(in html: String, chapterDir: String) -> String {
         // If the chapter is at the extraction root, no rewriting needed.
         guard !chapterDir.isEmpty else { return html }
 
@@ -500,7 +502,7 @@ enum EPUBCombiner {
 
     /// Adds `loading="lazy"` to <img> tags that don't already have it,
     /// so off-screen images don't consume memory until scrolled into view.
-    private static func addLazyLoading(to html: String) -> String {
+    static func addLazyLoading(to html: String) -> String {
         let pattern = #"(<img\b)(?![^>]*loading\s*=)([^>]*>)"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
             return html
@@ -512,7 +514,7 @@ enum EPUBCombiner {
         )
     }
 
-    private static func escapeHTMLAttribute(_ string: String) -> String {
+    static func escapeHTMLAttribute(_ string: String) -> String {
         string
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "\"", with: "&quot;")
@@ -529,7 +531,7 @@ private extension NSRange {
     }
 }
 
-private enum EPUBError: LocalizedError {
+enum EPUBError: LocalizedError {
     case invalidArchive
     case missingContainer
     case missingPackagePath
@@ -555,8 +557,8 @@ private enum EPUBError: LocalizedError {
     }
 }
 
-private enum EPUBArchiveExtractor {
-    private struct Entry {
+enum EPUBArchiveExtractor {
+    struct Entry {
         var path: String
         var compressionMethod: UInt16
         var compressedSize: Int
@@ -721,7 +723,7 @@ private enum EPUBArchiveExtractor {
     }
 }
 
-private struct ContainerDocument {
+struct ContainerDocument {
     var rootFilePath: String?
 
     static func parse(url: URL) throws -> ContainerDocument {
@@ -758,7 +760,7 @@ private final class MutableContainerParser: NSObject, XMLParserDelegate {
     }
 }
 
-private struct PackageDocument {
+struct PackageDocument {
     var title: String?
     var manifest: [String: ManifestItem]
     var spine: [String]
@@ -772,7 +774,7 @@ private struct PackageDocument {
     }
 }
 
-private enum PackageDocumentParser {
+enum PackageDocumentParser {
     static func parse(url: URL) throws -> PackageDocument {
         guard let parser = XMLParser(contentsOf: url) else {
             throw EPUBError.missingPackagePath

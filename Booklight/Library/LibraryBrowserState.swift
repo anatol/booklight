@@ -1,17 +1,18 @@
 import Foundation
-import SwiftUI
+import Observation
 
 /// UI state of the library screen: the search field (debounced) and the
 /// chosen sort order for non-active books, which persists across launches.
 @MainActor
-final class LibraryBrowserState: ObservableObject {
-    @Published var searchText = "" {
+@Observable
+final class LibraryBrowserState {
+    var searchText = "" {
         didSet { scheduleSearchDebounce() }
     }
     /// `searchText` after typing pauses; filtering uses this to avoid re-sorting
     /// on every keystroke.
-    @Published private(set) var debouncedSearchText = ""
-    @Published var sort: LibrarySortOption = .title {
+    private(set) var debouncedSearchText = ""
+    var sort: LibrarySortOption = .title {
         didSet {
             guard oldValue != sort else { return }
             defaults.set(sort.rawValue, forKey: Self.sortKey)
@@ -19,8 +20,8 @@ final class LibraryBrowserState: ObservableObject {
     }
 
     private static let sortKey = "Booklight.otherBooksSort"
-    private let defaults: UserDefaults
-    private var searchDebounceTask: Task<Void, Never>?
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var searchDebounceTask: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults

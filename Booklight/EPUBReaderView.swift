@@ -6,18 +6,19 @@ import WebKit
 /// Shift+"+"/"-" to adjust font size.
 /// Also manages in-document text search via injected JavaScript.
 @MainActor
-final class EPUBScrollProxy: ObservableObject {
-    weak var webView: WKWebView?
+@Observable
+final class EPUBScrollProxy {
+    @ObservationIgnored weak var webView: WKWebView?
 
     /// Current font size as a percentage of the default (100%). Range: 50–200%.
-    @Published var fontSizePercent: Int = 100
+    var fontSizePercent: Int = 100
 
     // MARK: - Search state
 
     /// Number of matches found for the current search query.
-    @Published var searchMatchCount: Int = 0
+    var searchMatchCount: Int = 0
     /// Zero-based index of the currently highlighted match.
-    @Published var searchCurrentIndex: Int = 0
+    var searchCurrentIndex: Int = 0
     /// The text that was last searched, used to detect whether a new search
     /// is needed or we can just navigate between existing results.
     var lastSearchText: String = ""
@@ -30,7 +31,7 @@ final class EPUBScrollProxy: ObservableObject {
 
     /// Saved chapter-based progress from before the search was opened,
     /// captured via `computeCenterProgress()` so we can restore on dismiss.
-    private var savedProgressJSON: String?
+    @ObservationIgnored private var savedProgressJSON: String?
 
     /// Saves the current scroll position so it can be restored later.
     /// Uses the chapter-based progress (robust across font size changes).
@@ -191,7 +192,7 @@ final class EPUBScrollProxy: ObservableObject {
 struct EPUBBookView: View {
     let book: Book
     let bookURL: URL
-    @ObservedObject var library: LibraryModel
+    var library: LibraryModel
     /// Progress shown in the window title; only updated from real reading
     /// positions, not while search is jumping around.
     @Binding var displayedProgress: Double?
@@ -202,7 +203,7 @@ struct EPUBBookView: View {
     @State private var isPreparing = true
     /// Initial scroll target computed from saved progress when the document loads.
     @State private var initialScrollTarget: EPUBScrollTarget?
-    @StateObject private var scrollProxy = EPUBScrollProxy()
+    @State private var scrollProxy = EPUBScrollProxy()
 
     @State private var showSearch = false
     @State private var searchText = ""

@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct ReaderContainerView: View {
-    @ObservedObject var library: LibraryModel
+    var library: LibraryModel
     let bookID: String
     /// The reader's title, published to the window so the library screen
     /// underneath doesn't overwrite it.

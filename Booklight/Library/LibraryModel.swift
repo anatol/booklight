@@ -1,31 +1,32 @@
 import Foundation
-import SwiftUI
+import Observation
 
 /// The app's library: which folders are configured, which books they contain,
 /// and each book's reading progress. Views observe this; the file work is
 /// delegated to `FolderAccess`, `LibraryScanner`, `ProgressStore` and `ActiveShelf`.
 @MainActor
-final class LibraryModel: ObservableObject {
-    @Published private(set) var trackingDirectoryURL: URL?
-    @Published private(set) var localLibraries: [URL] = []
-    @Published private(set) var books: [Book] = []
-    @Published private(set) var isLoading = false
-    @Published var errorMessage: String?
+@Observable
+final class LibraryModel {
+    private(set) var trackingDirectoryURL: URL?
+    private(set) var localLibraries: [URL] = []
+    private(set) var books: [Book] = []
+    private(set) var isLoading = false
+    var errorMessage: String?
     /// Bumped per book when another device changed its progress, telling an open
     /// reader to jump to the new position.
-    @Published private var readerSyncTokens: [String: UUID] = [:]
+    private var readerSyncTokens: [String: UUID] = [:]
 
-    private let folders: FolderAccess
-    private let scanner: LibraryScanner
+    @ObservationIgnored private let folders: FolderAccess
+    @ObservationIgnored private let scanner: LibraryScanner
     /// Per-tracking-directory services; replaced when the directory changes.
-    private var progressStore: ProgressStore?
-    private var shelf: ActiveShelf?
+    @ObservationIgnored private var progressStore: ProgressStore?
+    @ObservationIgnored private var shelf: ActiveShelf?
 
-    private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
     /// Identifies the latest refresh so a superseded one can't publish stale
     /// results or clear the newer one's loading state.
-    private var refreshGeneration = 0
-    private var pollTask: Task<Void, Never>?
+    @ObservationIgnored private var refreshGeneration = 0
+    @ObservationIgnored private var pollTask: Task<Void, Never>?
 
     init() {
         folders = FolderAccess()

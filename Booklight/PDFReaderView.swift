@@ -5,15 +5,16 @@ import SwiftUI
 /// allowing Space / Shift+Space to scroll by one viewport height.
 /// Also manages in-document text search via PDFKit's built-in findString API.
 @MainActor
-final class PDFScrollProxy: ObservableObject {
-    weak var pdfView: PDFView?
+@Observable
+final class PDFScrollProxy {
+    @ObservationIgnored weak var pdfView: PDFView?
 
     // MARK: - Search state
 
     /// All selections matching the current search query.
-    @Published var searchSelections: [PDFSelection] = []
+    var searchSelections: [PDFSelection] = []
     /// Zero-based index of the currently highlighted match.
-    @Published var searchCurrentIndex: Int = 0
+    var searchCurrentIndex: Int = 0
     /// The text that was last searched, used to detect whether a new search
     /// is needed or we can just navigate between existing results.
     var lastSearchText: String = ""
@@ -22,7 +23,7 @@ final class PDFScrollProxy: ObservableObject {
 
     /// Saved PDF destination from before the search was opened,
     /// so we can return to the original reading position on dismiss.
-    private var savedDestination: PDFDestination?
+    @ObservationIgnored private var savedDestination: PDFDestination?
 
     /// Saves the current scroll position so it can be restored later.
     func savePosition() {
@@ -188,12 +189,12 @@ final class PDFScrollProxy: ObservableObject {
 struct PDFBookView: View {
     let book: Book
     let bookURL: URL
-    @ObservedObject var library: LibraryModel
+    var library: LibraryModel
     /// Progress shown in the window title; only updated from real reading
     /// positions, not while search is jumping around.
     @Binding var displayedProgress: Double?
     let syncToken: UUID?
-    @StateObject private var scrollProxy = PDFScrollProxy()
+    @State private var scrollProxy = PDFScrollProxy()
 
     @State private var showSearch = false
     @State private var searchText = ""

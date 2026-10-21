@@ -3,8 +3,8 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @EnvironmentObject private var library: LibraryModel
-    @StateObject private var browser = LibraryBrowserState()
+    @Environment(LibraryModel.self) private var library
+    @State private var browser = LibraryBrowserState()
     @State private var showingSettings = false
     @State private var isPickingTrackingDirectory = false
     /// Title of the open reader, if any; keeps the window title on the book
@@ -119,8 +119,8 @@ struct ContentView: View {
 /// dismisses or cancels the search bar, and clears the search text so book
 /// filtering is removed and the default list is restored.
 private struct LibraryContentView: View {
-    @ObservedObject var library: LibraryModel
-    @ObservedObject var browser: LibraryBrowserState
+    var library: LibraryModel
+    var browser: LibraryBrowserState
     @Binding var isPickingTrackingDirectory: Bool
     @Binding var readerTitle: String?
     @Environment(\.isSearching) private var isSearching
@@ -223,8 +223,8 @@ private struct LibraryTitleView: View {
 private struct BookGallerySection: View {
     let title: String
     let books: [Book]
-    @ObservedObject var library: LibraryModel
-    @ObservedObject var browser: LibraryBrowserState
+    var library: LibraryModel
+    @Bindable var browser: LibraryBrowserState
     var isActiveSection: Bool = false
 
     private let columns = [
@@ -359,7 +359,7 @@ private func displayPath(for url: URL) -> String {
 }
 
 struct SettingsView: View {
-    @ObservedObject var library: LibraryModel
+    var library: LibraryModel
     @Environment(\.dismiss) private var dismiss
 
     @State private var isPickingTrackingDirectory = false

@@ -70,7 +70,8 @@ struct ReaderTopBar<Engine: ReaderEngine>: View {
 
 /// A vertical scrubber on the trailing edge that replaces the system scroll
 /// indicator: it always shows where you are, and dragging it jumps through the
-/// book with a live percentage. It stays slim until the pointer is over it.
+/// book with a live percentage. It is hidden until the pointer is over it (or
+/// the reader bars are up, which is how touch users reveal it).
 struct ReaderScrubber<Engine: ReaderEngine>: View {
     let session: ReaderSession<Engine>
     /// Current reading progress (0–1) from the reader.
@@ -82,6 +83,7 @@ struct ReaderScrubber<Engine: ReaderEngine>: View {
 
     private let thumbHeight: CGFloat = 44
     private var isExpanded: Bool { isScrubbing || isHovering }
+    private var isVisible: Bool { isExpanded || session.isChromeVisible }
     private var shownProgress: Double { isScrubbing ? scrubValue : progress.clampedToUnit }
 
     var body: some View {
@@ -117,6 +119,8 @@ struct ReaderScrubber<Engine: ReaderEngine>: View {
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topTrailing)
+            // Fully transparent but still hit-testable, so hovering the edge reveals it.
+            .opacity(isVisible ? 1 : 0)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -137,6 +141,7 @@ struct ReaderScrubber<Engine: ReaderEngine>: View {
             )
             .onHover { isHovering = $0 }
             .animation(.easeInOut(duration: 0.15), value: isExpanded)
+            .animation(.easeInOut(duration: 0.2), value: isVisible)
         }
         .frame(width: 56)
         .accessibilityElement()

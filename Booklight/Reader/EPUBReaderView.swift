@@ -7,8 +7,10 @@ import WebKit
 /// Also manages in-document text search via injected JavaScript.
 @MainActor
 @Observable
-final class EPUBScrollProxy {
+final class EPUBScrollProxy: ReaderEngine {
     @ObservationIgnored weak var webView: WKWebView?
+    /// Called after the user changes the text size, to persist the preference.
+    @ObservationIgnored var onTextSizeChange: ((Int) -> Void)?
 
     /// Current font size as a percentage of the default (100%). Range: 50–200%.
     var fontSizePercent: Int = 100
@@ -19,6 +21,8 @@ final class EPUBScrollProxy {
     var searchMatchCount: Int = 0
     /// Zero-based index of the currently highlighted match.
     var searchCurrentIndex: Int = 0
+    /// True while waiting for the page script to return match results.
+    var isSearchInProgress = false
     /// The text that was last searched, used to detect whether a new search
     /// is needed or we can just navigate between existing results.
     var lastSearchText: String = ""
@@ -51,6 +55,10 @@ final class EPUBScrollProxy {
         savedProgressJSON = nil
     }
 
+    func reportCurrentPosition() {
+        webView?.evaluateJavaScript("sendProgress();")
+    }
+
     /// Discards the saved position without restoring it.
     /// Used when the user confirms they want to stay at the current location
     /// (e.g. by clicking on the content during search).
@@ -70,6 +78,7 @@ final class EPUBScrollProxy {
         }
 
         lastSearchText = text
+        isSearchInProgress = true
 
         // Pass the query as an argument rather than splicing it into the script,
         // so quotes, backslashes and newlines can't break (or inject) JavaScript.
@@ -81,6 +90,7 @@ final class EPUBScrollProxy {
                 contentWorld: .page
             )
             guard let self, self.lastSearchText == text else { return }
+            self.isSearchInProgress = false
             let count = (result as? [String: Any])?["count"] as? Int ?? 0
             self.searchMatchCount = count
             self.searchCurrentIndex = 0
@@ -104,6 +114,7 @@ final class EPUBScrollProxy {
     /// Clears all search highlights from the DOM and resets search state.
     /// Does NOT clear `lastSearchText` so it persists for the next search open.
     func clearSearch() {
+        isSearchInProgress = false
         searchMatchCount = 0
         searchCurrentIndex = 0
         webView?.evaluateJavaScript("window._bookSearch.clear();")
@@ -136,16 +147,20 @@ final class EPUBScrollProxy {
 
     // MARK: - Font size
 
+    var supportsTextSize: Bool { true }
+
     /// Increase font size by one step (10%), capped at 200%.
-    func increaseFontSize() {
+    func increaseTextSize() {
         fontSizePercent = min(fontSizePercent + Self.fontSizeStep, Self.maxFontSize)
         applyFontSize()
+        onTextSizeChange?(fontSizePercent)
     }
 
     /// Decrease font size by one step (10%), floored at 50%.
-    func decreaseFontSize() {
+    func decreaseTextSize() {
         fontSizePercent = max(fontSizePercent - Self.fontSizeStep, Self.minFontSize)
         applyFontSize()
+        onTextSizeChange?(fontSizePercent)
     }
 
     /// The reading base font size (px) that corresponds to 100%. The combined HTML
@@ -203,13 +218,10 @@ struct EPUBBookView: View {
     @State private var isPreparing = true
     /// Initial scroll target computed from saved progress when the document loads.
     @State private var initialScrollTarget: EPUBScrollTarget?
-    @State private var scrollProxy = EPUBScrollProxy()
-
-    @State private var showSearch = false
-    @State private var searchText = ""
+    @State private var session = ReaderSession(engine: EPUBScrollProxy())
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ReaderScaffold(session: session) {
             Group {
                 if let document {
                     EPUBWebView(
@@ -219,14 +231,14 @@ struct EPUBBookView: View {
                         externalChapterIndex: book.progressState?.epubChapterIndex ?? 0,
                         externalChapterProgress: book.progressState?.epubChapterProgress ?? 0,
                         externalOverallProgress: book.progressState?.progress ?? 0,
-                        scrollProxy: scrollProxy,
-                        initialFontSizePercent: scrollProxy.fontSizePercent,
+                        scrollProxy: session.engine,
+                        initialFontSizePercent: session.engine.fontSizePercent,
                         onContentTapped: {
                             // Clicking content during search confirms the current
                             // position as the new reading location.
-                            guard showSearch else { return }
+                            guard session.isSearchVisible else { return }
                             withAnimation(.easeInOut(duration: 0.2)) {
-                                confirmSearchPosition()
+                                session.confirmSearchPosition()
                             }
                         }
                     ) { chapterIndex, chapterProgress, overallProgress in
@@ -244,7 +256,7 @@ struct EPUBBookView: View {
                         )
                         // Update title progress only when not searching, so the title
                         // reflects the actual reading position rather than search matches.
-                        if !showSearch {
+                        if !session.isSearchVisible {
                             displayedProgress = clampedOverall
                         }
                     }
@@ -255,137 +267,17 @@ struct EPUBBookView: View {
                         "Could Not Open EPUB", systemImage: "exclamationmark.triangle", description: Text(loadError ?? "Unknown error"))
                 }
             }
-
-            if showSearch {
-                ReaderSearchBar(
-                    searchText: $searchText,
-                    matchCount: scrollProxy.searchMatchCount,
-                    currentMatchIndex: scrollProxy.searchCurrentIndex,
-                    hasActiveSearch: !scrollProxy.lastSearchText.isEmpty
-                        && scrollProxy.lastSearchText == searchText,
-                    onSearchOrNext: { handleSearchOrNext() },
-                    onNext: { scrollProxy.nextSearchMatch() },
-                    onPrevious: { scrollProxy.previousSearchMatch() },
-                    onDismiss: {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            dismissSearch()
-                        }
-                    }
-                )
-                .padding(.top, 8)
-                .padding(.trailing, 16)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-
-            // Cmd+F toggle button — invisible, uses .keyboardShortcut so it
-            // works regardless of which view currently has focus (unlike
-            // .onKeyPress which breaks on Mac Catalyst after dismiss).
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    if showSearch {
-                        dismissSearch()
-                    } else {
-                        openSearch()
-                    }
-                }
-            } label: {
-                EmptyView()
-            }
-            .keyboardShortcut("f", modifiers: .command)
-            .hidden()
-            // Standard back-navigation shortcuts.
-            Button {
-                scrollProxy.jumpBack()
-            } label: {
-                EmptyView()
-            }
-            .keyboardShortcut("[", modifiers: .command)
-            .hidden()
-            Button {
-                scrollProxy.jumpBack()
-            } label: {
-                EmptyView()
-            }
-            .keyboardShortcut(.leftArrow, modifiers: .command)
-            .hidden()
         }
-        .focusable()
-        .onKeyPress(.space, phases: .down) { keyPress in
-            // Don't intercept Space when search bar is active (user is typing).
-            guard !showSearch else { return .ignored }
-            // Space scrolls down, Shift+Space scrolls up (like macOS Preview).
-            if keyPress.modifiers.contains(.shift) {
-                scrollProxy.scrollPageUp()
-            } else {
-                scrollProxy.scrollPageDown()
-            }
-            return .handled
-        }
-        // Shift+"+" increases font size, Shift+"-" (or just "-") decreases it.
-        .onKeyPress(characters: .init(charactersIn: "+="), phases: .down) { keyPress in
-            guard keyPress.modifiers.contains(.shift) else { return .ignored }
-            scrollProxy.increaseFontSize()
-            library.saveEPUBFontSize(for: book, fontSizePercent: scrollProxy.fontSizePercent)
-            return .handled
-        }
-        .onKeyPress(characters: .init(charactersIn: "-_"), phases: .down) { keyPress in
-            guard keyPress.modifiers.contains(.shift) else { return .ignored }
-            scrollProxy.decreaseFontSize()
-            library.saveEPUBFontSize(for: book, fontSizePercent: scrollProxy.fontSizePercent)
-            return .handled
-        }
-        .toolbar(.hidden, for: .navigationBar)
         .task(id: book.id) {
             // Restore saved font size preference before the document loads,
             // so it's ready to apply when the web view finishes navigation.
-            scrollProxy.fontSizePercent = book.progressState?.epubFontSizePercent ?? 100
+            session.engine.fontSizePercent = book.progressState?.epubFontSizePercent ?? 100
+            session.engine.onTextSizeChange = { percent in
+                library.saveEPUBFontSize(for: book, fontSizePercent: percent)
+            }
             library.markOpened(book)
             await loadDocument()
         }
-    }
-
-    private func openSearch() {
-        // Save position before searching so we can restore on dismiss.
-        scrollProxy.savePosition()
-        // Pre-fill with the last searched text (stays empty if no prior search).
-        searchText = scrollProxy.lastSearchText
-        showSearch = true
-    }
-
-    /// Enter in the search bar: perform a new search if the text changed,
-    /// or navigate to the next match if the same text is already searched.
-    private func handleSearchOrNext() {
-        guard !searchText.isEmpty else { return }
-        if searchText == scrollProxy.lastSearchText && scrollProxy.searchMatchCount > 0 {
-            scrollProxy.nextSearchMatch()
-        } else {
-            scrollProxy.search(for: searchText)
-        }
-    }
-
-    private func dismissSearch() {
-        showSearch = false
-        // Restore the reading position from before search was opened.
-        scrollProxy.clearSearch()
-        scrollProxy.restorePosition()
-        // Keep searchText on the proxy's lastSearchText for next open,
-        // but clear the local binding.
-        searchText = ""
-    }
-
-    /// Confirms the current scroll position as the new reading location.
-    /// Called when the user clicks on content during search — hides the search bar,
-    /// clears highlights, but keeps the current position instead of restoring
-    /// the pre-search location. Triggers a progress report so the title and
-    /// saved position update immediately.
-    private func confirmSearchPosition() {
-        showSearch = false
-        scrollProxy.clearSearch()
-        scrollProxy.discardSavedPosition()
-        searchText = ""
-        // Force an immediate progress report so the title bar and persisted
-        // position reflect the newly confirmed reading location.
-        scrollProxy.webView?.evaluateJavaScript("sendProgress();")
     }
 
     private func loadDocument() async {

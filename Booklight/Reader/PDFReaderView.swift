@@ -6,8 +6,10 @@ import SwiftUI
 /// Also manages in-document text search via PDFKit's built-in findString API.
 @MainActor
 @Observable
-final class PDFScrollProxy {
+final class PDFScrollProxy: ReaderEngine {
     @ObservationIgnored weak var pdfView: PDFView?
+    /// Set by the representable's coordinator; re-emits the current position.
+    @ObservationIgnored var positionReporter: (() -> Void)?
 
     // MARK: - Search state
 
@@ -21,6 +23,12 @@ final class PDFScrollProxy {
     /// is needed or we can just navigate between existing results.
     var lastSearchText: String = ""
     @ObservationIgnored private var findObservers: [NSObjectProtocol] = []
+
+    var searchMatchCount: Int { searchSelections.count }
+
+    func reportCurrentPosition() {
+        positionReporter?()
+    }
 
     // MARK: - Position save/restore (for returning to pre-search position)
 
@@ -238,13 +246,10 @@ struct PDFBookView: View {
     /// positions, not while search is jumping around.
     @Binding var displayedProgress: Double?
     let syncToken: UUID?
-    @State private var scrollProxy = PDFScrollProxy()
-
-    @State private var showSearch = false
-    @State private var searchText = ""
+    @State private var session = ReaderSession(engine: PDFScrollProxy())
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ReaderScaffold(session: session) {
             PDFReaderRepresentable(
                 documentURL: bookURL,
                 initialPageIndex: book.progressState?.pdfPageIndex ?? 0,
@@ -252,20 +257,20 @@ struct PDFBookView: View {
                 externalJumpToken: syncToken,
                 externalPageIndex: book.progressState?.pdfPageIndex ?? 0,
                 externalPageOffsetY: book.progressState?.pdfPageOffsetY ?? 0,
-                scrollProxy: scrollProxy,
+                scrollProxy: session.engine,
                 onContentTapped: {
                     // Clicking content during search confirms the current
                     // position as the new reading location.
-                    guard showSearch else { return }
+                    guard session.isSearchVisible else { return }
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        confirmSearchPosition()
+                        session.confirmSearchPosition()
                     }
                 }
             ) { pageIndex, pageCount, pageOffsetY in
                 library.savePDFPosition(for: book, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY)
                 // Update title progress only when not searching, so the title
                 // reflects the actual reading position rather than search matches.
-                if !showSearch {
+                if !session.isSearchVisible {
                     let readingPosition = PDFReadingPosition(
                         pageIndex: pageIndex,
                         pageCount: pageCount,
@@ -274,132 +279,11 @@ struct PDFBookView: View {
                     displayedProgress = readingPosition.progress.clampedToUnit
                 }
             }
-
-            if showSearch {
-                ReaderSearchBar(
-                    searchText: $searchText,
-                    matchCount: scrollProxy.searchSelections.count,
-                    currentMatchIndex: scrollProxy.searchCurrentIndex,
-                    isSearching: scrollProxy.isSearchInProgress,
-                    hasActiveSearch: !scrollProxy.lastSearchText.isEmpty
-                        && scrollProxy.lastSearchText == searchText,
-                    onSearchOrNext: { handleSearchOrNext() },
-                    onNext: { scrollProxy.nextSearchMatch() },
-                    onPrevious: { scrollProxy.previousSearchMatch() },
-                    onDismiss: {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            dismissSearch()
-                        }
-                    }
-                )
-                .padding(.top, 8)
-                .padding(.trailing, 16)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-
-            // Cmd+F toggle button — invisible, uses .keyboardShortcut so it
-            // works regardless of which view currently has focus (unlike
-            // .onKeyPress which requires the view to be focused, and breaks
-            // on Mac Catalyst after the search bar is dismissed).
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    if showSearch {
-                        dismissSearch()
-                    } else {
-                        openSearch()
-                    }
-                }
-            } label: {
-                EmptyView()
-            }
-            .keyboardShortcut("f", modifiers: .command)
-            .hidden()
-            // Standard back-navigation shortcuts.
-            Button {
-                scrollProxy.jumpBack()
-            } label: {
-                EmptyView()
-            }
-            .keyboardShortcut("[", modifiers: .command)
-            .hidden()
-            Button {
-                scrollProxy.jumpBack()
-            } label: {
-                EmptyView()
-            }
-            .keyboardShortcut(.leftArrow, modifiers: .command)
-            .hidden()
         }
-        .focusable()
-        .onKeyPress(.space, phases: .down) { keyPress in
-            // Don't intercept Space when search bar is active (user is typing).
-            guard !showSearch else { return .ignored }
-            // Space scrolls down, Shift+Space scrolls up (like macOS Preview).
-            if keyPress.modifiers.contains(.shift) {
-                scrollProxy.scrollPageUp()
-            } else {
-                scrollProxy.scrollPageDown()
-            }
-            return .handled
-        }
-        .toolbar(.hidden, for: .navigationBar)
         .task(id: book.id) {
             library.markOpened(book)
         }
         .background(Color(uiColor: .secondarySystemBackground))
-    }
-
-    private func openSearch() {
-        // Save position before searching so we can restore on dismiss.
-        scrollProxy.savePosition()
-        // Pre-fill with the last searched text (stays empty if no prior search).
-        searchText = scrollProxy.lastSearchText
-        showSearch = true
-    }
-
-    /// Enter in the search bar: perform a new search if the text changed,
-    /// or navigate to the next match if the same text is already searched.
-    private func handleSearchOrNext() {
-        guard !searchText.isEmpty else { return }
-        if searchText == scrollProxy.lastSearchText && !scrollProxy.searchSelections.isEmpty {
-            scrollProxy.nextSearchMatch()
-        } else {
-            scrollProxy.search(for: searchText)
-        }
-    }
-
-    private func dismissSearch() {
-        showSearch = false
-        // Restore the reading position from before search was opened.
-        scrollProxy.clearSearch()
-        scrollProxy.restorePosition()
-        // Keep searchText on the proxy's lastSearchText for next open,
-        // but clear the local binding.
-        searchText = ""
-    }
-
-    /// Confirms the current scroll position as the new reading location.
-    /// Called when the user clicks on content during search — hides the search bar,
-    /// clears highlights, but keeps the current position instead of restoring
-    /// the pre-search location.
-    private func confirmSearchPosition() {
-        showSearch = false
-        scrollProxy.clearSearch()
-        scrollProxy.discardSavedPosition()
-        searchText = ""
-        // Directly compute and set the title progress from the current PDFView
-        // position. We can't rely on the debounced position notification because
-        // the coordinator deduplicates unchanged positions, and the user may not
-        // have scrolled since the last emit.
-        guard let readingPosition = scrollProxy.pdfView?.readingPosition() else { return }
-
-        library.savePDFPosition(
-            for: book,
-            pageIndex: readingPosition.pageIndex,
-            pageCount: readingPosition.pageCount,
-            pageOffsetY: readingPosition.pageOffsetY
-        )
-        displayedProgress = readingPosition.progress.clampedToUnit
     }
 }
 
@@ -431,6 +315,9 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         pdfView.backgroundColor = .secondarySystemBackground
         // Wire up the scroll proxy so SwiftUI key events can drive scrolling.
         scrollProxy.pdfView = pdfView
+        scrollProxy.positionReporter = { [weak coordinator = context.coordinator] in
+            coordinator?.emitPosition(force: true)
+        }
         // Tap gesture to detect content clicks (used to confirm search position).
         // cancelsTouchesInView=false so it doesn't interfere with text selection or links.
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleContentTap))
@@ -572,13 +459,13 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         /// Uses `currentDestination` for both page and offset to ensure they are
         /// consistent — `currentPage` can flip to the next page before the
         /// destination point catches up, causing progress to jump back and forth.
-        private func emitPosition() {
+        func emitPosition(force: Bool = false) {
             guard let pdfView else { return }
             guard let readingPosition = pdfView.readingPosition() else { return }
 
             // Deduplicate: skip if page and offset haven't meaningfully changed.
             let offsetThreshold = 0.005
-            if lastSentPageIndex == readingPosition.pageIndex,
+            if !force, lastSentPageIndex == readingPosition.pageIndex,
                 let lastOffset = lastSentOffsetY,
                 abs(lastOffset - readingPosition.pageOffsetY) < offsetThreshold
             {

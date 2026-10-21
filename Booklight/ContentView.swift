@@ -268,6 +268,27 @@ private struct BookGallerySection: View {
                             } label: {
                                 Label("Mark as Unread", systemImage: "arrow.uturn.backward.circle")
                             }
+                        } else {
+                            // Copies the book into the tracking directory so it syncs
+                            // with its progress, without having to open it first.
+                            Button {
+                                library.markOpened(book)
+                            } label: {
+                                Label("Add to Active Books", systemImage: "plus.circle")
+                            }
+                        }
+
+                        #if targetEnvironment(macCatalyst)
+                            Button {
+                                // Opening a folder URL shows it in Finder.
+                                UIApplication.shared.open(book.fileURL.deletingLastPathComponent())
+                            } label: {
+                                Label("Show in Finder", systemImage: "folder")
+                            }
+                        #endif
+
+                        if isActiveSection {
+                            Divider()
 
                             Button(role: .destructive) {
                                 bookPendingRemoval = book

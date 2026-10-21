@@ -2,16 +2,21 @@ import SwiftUI
 import UIKit
 
 struct ReaderContainerView: View {
-    @ObservedObject var controller: LibraryController
+    @ObservedObject var library: LibraryModel
     let bookID: String
+    /// The reader's title, published to the window so the library screen
+    /// underneath doesn't overwrite it.
+    @Binding var readerTitle: String?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
     /// Controls visibility of the floating back button in the top-left corner.
     @State private var showBackButton = false
+    /// Reading progress (0.0–1.0) shown in the window title.
+    @State private var displayedProgress: Double?
 
     private var book: Book? {
-        controller.books.first(where: { $0.id == bookID })
+        library.book(withID: bookID)
     }
 
     /// The book filename without extension, used as the base window title in reader mode.
@@ -24,7 +29,7 @@ struct ReaderContainerView: View {
     private var windowTitle: String {
         let name = bookName
         guard !name.isEmpty else { return "" }
-        if let progress = controller.openBookProgress {
+        if let progress = displayedProgress {
             let percent = Int(round(progress * 100))
             return "\(name)  |  \(percent)%"
         }
@@ -34,21 +39,23 @@ struct ReaderContainerView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             Group {
-                if let book, let bookURL = controller.absoluteURL(for: book) {
+                if let book {
                     switch book.format {
                     case .pdf:
                         PDFBookView(
                             book: book,
-                            bookURL: bookURL,
-                            controller: controller,
-                            syncToken: controller.readerSyncToken(for: bookID)
+                            bookURL: book.fileURL,
+                            library: library,
+                            displayedProgress: $displayedProgress,
+                            syncToken: library.readerSyncToken(for: bookID)
                         )
                     case .epub:
                         EPUBBookView(
                             book: book,
-                            bookURL: bookURL,
-                            controller: controller,
-                            syncToken: controller.readerSyncToken(for: bookID)
+                            bookURL: book.fileURL,
+                            library: library,
+                            displayedProgress: $displayedProgress,
+                            syncToken: library.readerSyncToken(for: bookID)
                         )
                     }
                 } else {
@@ -95,27 +102,26 @@ struct ReaderContainerView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             // Set initial progress from saved state so the title shows it immediately.
-            controller.openBookProgress = book?.progress
-            controller.openBookTitle = windowTitle
+            displayedProgress = book?.progress
+            readerTitle = windowTitle
             setSceneTitle(windowTitle)
-            controller.registerReaderProgressObservation(for: bookID)
+            library.registerReaderProgressObservation(for: bookID)
         }
         .onDisappear {
-            controller.openBookTitle = nil
-            controller.openBookProgress = nil
+            readerTitle = nil
             // Restore the library title when leaving the reader.
-            let libraryTitle = ContentView.windowTitle(for: controller.trackingDirectoryURL)
+            let libraryTitle = ContentView.windowTitle(for: library.trackingDirectoryURL)
             setSceneTitle(libraryTitle)
         }
         // Update the Mac Catalyst window title whenever progress changes.
-        .onChange(of: controller.openBookProgress) {
+        .onChange(of: displayedProgress) {
             let title = windowTitle
-            controller.openBookTitle = title
+            readerTitle = title
             setSceneTitle(title)
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            controller.synchronizeReaderProgressIfNeeded(for: bookID)
+            library.synchronizeReaderProgressIfNeeded(for: bookID)
         }
     }
 

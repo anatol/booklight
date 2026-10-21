@@ -16,7 +16,7 @@ final class BookSortingTests: XCTestCase {
             modifiedAt: baseDate
         )
 
-        let sorted = LibraryController.sortOtherBooks([older, newer], using: .modifiedAt)
+        let sorted = LibrarySearch.sortOtherBooks([older, newer], using: .modifiedAt)
 
         XCTAssertEqual(sorted.map(\.id), ["newer", "older"])
     }
@@ -34,7 +34,7 @@ final class BookSortingTests: XCTestCase {
             lastOpenedAt: baseDate
         )
 
-        let sorted = LibraryController.sortOtherBooks([neverOpened, recentlyOpened], using: .lastOpenedAt)
+        let sorted = LibrarySearch.sortOtherBooks([neverOpened, recentlyOpened], using: .lastOpenedAt)
 
         XCTAssertEqual(sorted.map(\.id), ["recently-opened", "never-opened"])
     }
@@ -51,7 +51,7 @@ final class BookSortingTests: XCTestCase {
             modifiedAt: baseDate
         )
 
-        let sorted = LibraryController.sortOtherBooks(
+        let sorted = LibrarySearch.sortOtherBooks(
             [newerButWorseMatch, betterMatch],
             using: .modifiedAt,
             query: "alp"

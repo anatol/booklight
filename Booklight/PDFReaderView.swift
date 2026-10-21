@@ -188,7 +188,10 @@ final class PDFScrollProxy: ObservableObject {
 struct PDFBookView: View {
     let book: Book
     let bookURL: URL
-    @ObservedObject var controller: LibraryController
+    @ObservedObject var library: LibraryModel
+    /// Progress shown in the window title; only updated from real reading
+    /// positions, not while search is jumping around.
+    @Binding var displayedProgress: Double?
     let syncToken: UUID?
     @StateObject private var scrollProxy = PDFScrollProxy()
 
@@ -214,7 +217,7 @@ struct PDFBookView: View {
                     }
                 }
             ) { pageIndex, pageCount, pageOffsetY in
-                controller.savePDFPosition(for: book, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY)
+                library.savePDFPosition(for: book, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY)
                 // Update title progress only when not searching, so the title
                 // reflects the actual reading position rather than search matches.
                 if !showSearch {
@@ -223,7 +226,7 @@ struct PDFBookView: View {
                         pageCount: pageCount,
                         pageOffsetY: pageOffsetY
                     )
-                    controller.openBookProgress = readingPosition.progress.clampedToUnit
+                    displayedProgress = readingPosition.progress.clampedToUnit
                 }
             }
 
@@ -295,7 +298,7 @@ struct PDFBookView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .task(id: book.id) {
-            controller.markOpened(book)
+            library.markOpened(book)
         }
         .background(Color(uiColor: .secondarySystemBackground))
     }
@@ -344,13 +347,13 @@ struct PDFBookView: View {
         // have scrolled since the last emit.
         guard let readingPosition = scrollProxy.pdfView?.readingPosition() else { return }
 
-        controller.savePDFPosition(
+        library.savePDFPosition(
             for: book,
             pageIndex: readingPosition.pageIndex,
             pageCount: readingPosition.pageCount,
             pageOffsetY: readingPosition.pageOffsetY
         )
-        controller.openBookProgress = readingPosition.progress.clampedToUnit
+        displayedProgress = readingPosition.progress.clampedToUnit
     }
 }
 

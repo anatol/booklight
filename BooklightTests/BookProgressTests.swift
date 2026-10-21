@@ -62,7 +62,7 @@ final class BookProgressTests: XCTestCase {
         )
         newerState.updatedAt = newDate
 
-        let merged = LibraryController.mergeStates(local: olderState, remote: newerState)
+        let merged = ProgressStore.mergeStates(local: olderState, remote: newerState)
 
         XCTAssertEqual(merged.pdfPageIndex, 5)
         XCTAssertEqual(merged.lastOpenedAt, newDate)
@@ -85,7 +85,7 @@ final class BookProgressTests: XCTestCase {
         newerState.updatedAt = newDate
         newerState.epubFontSizePercent = 130
 
-        let merged = LibraryController.mergeStates(local: olderState, remote: newerState)
+        let merged = ProgressStore.mergeStates(local: olderState, remote: newerState)
 
         XCTAssertEqual(merged.epubFontSizePercent, 130)
         XCTAssertEqual(merged.updatedAt, newDate)
@@ -110,7 +110,7 @@ final class BookProgressTests: XCTestCase {
         )
         newerUnfinishedState.updatedAt = newDate
 
-        let merged = LibraryController.mergeStates(local: finishedState, remote: newerUnfinishedState)
+        let merged = ProgressStore.mergeStates(local: finishedState, remote: newerUnfinishedState)
 
         XCTAssertFalse(merged.isFinished)
         XCTAssertEqual(merged.pdfPageIndex, 1)
@@ -125,11 +125,11 @@ final class BookProgressTests: XCTestCase {
         let wrongExt = String(repeating: "d", count: 64) + ".txt"
         let wrongLength = String(repeating: "e", count: 63) + ".json"
 
-        XCTAssertTrue(LibraryController.isCanonicalProgressStateFileName(validLower))
-        XCTAssertTrue(LibraryController.isCanonicalProgressStateFileName(validUpper))
-        XCTAssertFalse(LibraryController.isCanonicalProgressStateFileName(syncConflict))
-        XCTAssertFalse(LibraryController.isCanonicalProgressStateFileName(wrongExt))
-        XCTAssertFalse(LibraryController.isCanonicalProgressStateFileName(wrongLength))
+        XCTAssertTrue(ProgressStore.isCanonicalProgressStateFileName(validLower))
+        XCTAssertTrue(ProgressStore.isCanonicalProgressStateFileName(validUpper))
+        XCTAssertFalse(ProgressStore.isCanonicalProgressStateFileName(syncConflict))
+        XCTAssertFalse(ProgressStore.isCanonicalProgressStateFileName(wrongExt))
+        XCTAssertFalse(ProgressStore.isCanonicalProgressStateFileName(wrongLength))
     }
 
     func testTrackingDirectoryContainmentUsesPathComponents() {
@@ -137,7 +137,7 @@ final class BookProgressTests: XCTestCase {
         let bookInsideTrackingDirectory = URL(fileURLWithPath: "/tmp/Books/books/example.pdf")
         let bookInSiblingDirectory = URL(fileURLWithPath: "/tmp/BooksExtra/books/example.pdf")
 
-        XCTAssertTrue(LibraryController.isFileURL(bookInsideTrackingDirectory, containedInDirectory: trackingDirectory))
-        XCTAssertFalse(LibraryController.isFileURL(bookInSiblingDirectory, containedInDirectory: trackingDirectory))
+        XCTAssertTrue(TrackingLayout.isFileURL(bookInsideTrackingDirectory, containedInDirectory: trackingDirectory))
+        XCTAssertFalse(TrackingLayout.isFileURL(bookInSiblingDirectory, containedInDirectory: trackingDirectory))
     }
 }

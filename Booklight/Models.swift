@@ -215,6 +215,21 @@ struct PDFReadingPosition: Hashable, Sendable {
 }
 
 extension BookProgressState {
+    /// A fresh record for a book that was just opened (or reset) with no position yet.
+    static func initial(bookID: String, at date: Date = .now) -> BookProgressState {
+        BookProgressState(
+            bookID: bookID,
+            updatedAt: date,
+            lastOpenedAt: date,
+            progress: 0,
+            pdfPageIndex: nil,
+            pdfPageCount: nil,
+            epubChapterIndex: nil,
+            epubChapterPath: nil,
+            epubChapterProgress: nil
+        )
+    }
+
     static func pdf(bookID: String, pageIndex: Int, pageCount: Int, pageOffsetY: Double = 0, lastOpenedAt: Date) -> BookProgressState {
         let readingPosition = PDFReadingPosition(pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY)
         return BookProgressState(

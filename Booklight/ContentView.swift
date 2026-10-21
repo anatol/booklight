@@ -3,8 +3,13 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var controller = LibraryController()
+    @StateObject private var library = LibraryModel()
+    @StateObject private var browser = LibraryBrowserState()
     @State private var showingSettings = false
+    @State private var isPickingTrackingDirectory = false
+    /// Title of the open reader, if any; keeps the window title on the book
+    /// while the library view underneath re-renders.
+    @State private var readerTitle: String?
 
     /// Builds the window title: "Booklight - ~/path/to/dir" or just "Booklight" if no directory set.
     static func windowTitle(for trackingURL: URL?) -> String {
@@ -16,93 +21,110 @@ struct ContentView: View {
         NavigationStack {
             // Wrapped in a child view so it can read @Environment(\.isSearching)
             // and clear the search text when the user cancels/dismisses search.
-            LibraryContentView(controller: controller)
-                .navigationTitle(controller.openBookTitle ?? Self.windowTitle(for: controller.trackingDirectoryURL))
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .principal) {
-                        LibraryTitleView(libraryURL: controller.trackingDirectoryURL)
+            LibraryContentView(
+                library: library,
+                browser: browser,
+                isPickingTrackingDirectory: $isPickingTrackingDirectory,
+                readerTitle: $readerTitle
+            )
+            .navigationTitle(readerTitle ?? Self.windowTitle(for: library.trackingDirectoryURL))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    LibraryTitleView(libraryURL: library.trackingDirectoryURL)
+                }
+
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if library.trackingDirectoryURL != nil {
+                        Button {
+                            library.refresh(silently: false)
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
                     }
 
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        if controller.trackingDirectoryURL != nil {
-                            Button {
-                                controller.refresh(silently: false)
-                            } label: {
-                                Label("Refresh", systemImage: "arrow.clockwise")
-                            }
-                        }
-
-                        Button {
-                            showingSettings = true
-                        } label: {
-                            Label("Settings", systemImage: "gearshape")
-                        }
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
                     }
                 }
+            }
         }
         .overlay {
-            if controller.isLoading {
+            if library.isLoading {
                 ProgressView("Scanning library…")
                     .padding(20)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             }
         }
         .sheet(isPresented: $showingSettings) {
-            SettingsView(controller: controller)
+            SettingsView(library: library)
         }
         .fileImporter(
-            isPresented: $controller.isPickingTrackingDirectory,
+            isPresented: $isPickingTrackingDirectory,
             allowedContentTypes: [.folder],
             allowsMultipleSelection: false
         ) { result in
             switch result {
             case .success(let urls):
                 if let firstURL = urls.first {
-                    controller.handlePickedTrackingDirectory(.success(firstURL))
+                    library.handlePickedTrackingDirectory(.success(firstURL))
                 }
             case .failure(let error):
-                controller.handlePickedTrackingDirectory(.failure(error))
+                library.handlePickedTrackingDirectory(.failure(error))
             }
         }
         .alert(
             "Problem",
             isPresented: Binding(
-                get: { controller.errorMessage != nil },
-                set: { if !$0 { controller.errorMessage = nil } }
+                get: { library.errorMessage != nil },
+                set: { if !$0 { library.errorMessage = nil } }
             ),
             actions: {
                 Button("OK", role: .cancel) {}
             },
             message: {
-                Text(controller.errorMessage ?? "")
+                Text(library.errorMessage ?? "")
             }
         )
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
-                controller.refresh(silently: true)
+                library.refresh(silently: true)
             } else if phase == .background {
-                controller.flushPendingProgressWrites()
+                flushProgressInBackground()
             }
         }
         .onDisappear {
-            controller.flushPendingProgressWrites()
+            flushProgressInBackground()
         }
-        .searchable(text: $controller.searchText, prompt: "Search by title")
+        .searchable(text: $browser.searchText, prompt: "Search by title")
     }
 
+    /// Writes queued progress before the app is suspended. The background task
+    /// keeps the process alive long enough for the asynchronous flush to finish.
+    private func flushProgressInBackground() {
+        let taskID = UIApplication.shared.beginBackgroundTask(withName: "Flush reading progress")
+        Task {
+            await library.flushPendingProgressWrites()
+            UIApplication.shared.endBackgroundTask(taskID)
+        }
+    }
 }
 
 /// Child view that reads `@Environment(\.isSearching)` to detect when the user
 /// dismisses or cancels the search bar, and clears the search text so book
 /// filtering is removed and the default list is restored.
 private struct LibraryContentView: View {
-    @ObservedObject var controller: LibraryController
+    @ObservedObject var library: LibraryModel
+    @ObservedObject var browser: LibraryBrowserState
+    @Binding var isPickingTrackingDirectory: Bool
+    @Binding var readerTitle: String?
     @Environment(\.isSearching) private var isSearching
 
     var body: some View {
         Group {
-            if controller.trackingDirectoryURL == nil {
+            if library.trackingDirectoryURL == nil {
                 emptyLibraryView
             } else {
                 libraryView
@@ -110,7 +132,7 @@ private struct LibraryContentView: View {
         }
         .onChange(of: isSearching) { _, searching in
             if !searching {
-                controller.searchText = ""
+                browser.searchText = ""
             }
         }
     }
@@ -132,7 +154,7 @@ private struct LibraryContentView: View {
             }
 
             Button("Choose Tracking Directory") {
-                controller.isPickingTrackingDirectory = true
+                isPickingTrackingDirectory = true
             }
             .buttonStyle(.borderedProminent)
         }
@@ -142,29 +164,32 @@ private struct LibraryContentView: View {
     }
 
     private var libraryView: some View {
-        ScrollView {
+        let sections = browser.sections(of: library.books)
+        return ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                if controller.books.isEmpty {
+                if library.books.isEmpty {
                     Text("No PDF or EPUB files found in the selected folder.")
                         .foregroundStyle(.secondary)
-                } else if controller.activeBooks.isEmpty && controller.otherBooks.isEmpty && !controller.debouncedSearchText.isEmpty {
-                    Text("No books match “\(controller.searchText)”")
+                } else if sections.active.isEmpty && sections.other.isEmpty && !browser.debouncedSearchText.isEmpty {
+                    Text("No books match “\(browser.searchText)”")
                         .foregroundStyle(.secondary)
                 } else {
-                    if !controller.activeBooks.isEmpty {
+                    if !sections.active.isEmpty {
                         BookGallerySection(
                             title: "Active Books",
-                            books: controller.activeBooks,
-                            controller: controller,
+                            books: sections.active,
+                            library: library,
+                            browser: browser,
                             isActiveSection: true
                         )
                     }
 
-                    if !controller.otherBooks.isEmpty || controller.activeBooks.isEmpty {
+                    if !sections.other.isEmpty || sections.active.isEmpty {
                         BookGallerySection(
-                            title: controller.activeBooks.isEmpty ? "Books" : "Library",
-                            books: controller.otherBooks,
-                            controller: controller,
+                            title: sections.active.isEmpty ? "Books" : "Library",
+                            books: sections.other,
+                            library: library,
+                            browser: browser,
                             isActiveSection: false
                         )
                     }
@@ -174,7 +199,7 @@ private struct LibraryContentView: View {
             .padding(.vertical, 22)
         }
         .navigationDestination(for: Book.self) { book in
-            ReaderContainerView(controller: controller, bookID: book.id)
+            ReaderContainerView(library: library, bookID: book.id, readerTitle: $readerTitle)
         }
         .background(Color(uiColor: .systemGroupedBackground))
     }
@@ -195,7 +220,8 @@ private struct LibraryTitleView: View {
 private struct BookGallerySection: View {
     let title: String
     let books: [Book]
-    @ObservedObject var controller: LibraryController
+    @ObservedObject var library: LibraryModel
+    @ObservedObject var browser: LibraryBrowserState
     var isActiveSection: Bool = false
 
     private let columns = [
@@ -212,13 +238,13 @@ private struct BookGallerySection: View {
 
                 if !isActiveSection {
                     Menu {
-                        Picker("Sort by", selection: $controller.otherBooksSort) {
-                            ForEach(LibraryController.OtherBooksSortOption.allCases) { option in
+                        Picker("Sort by", selection: $browser.sort) {
+                            ForEach(LibrarySortOption.allCases) { option in
                                 Text(option.title).tag(option)
                             }
                         }
                     } label: {
-                        Label("Sort: \(controller.otherBooksSort.shortLabel)", systemImage: "arrow.up.arrow.down.circle")
+                        Label("Sort: \(browser.sort.shortLabel)", systemImage: "arrow.up.arrow.down.circle")
                             .font(.subheadline.weight(.medium))
                     }
                 }
@@ -227,19 +253,19 @@ private struct BookGallerySection: View {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
                 ForEach(books) { book in
                     NavigationLink(value: book) {
-                        BookCard(book: book, fileURL: controller.absoluteURL(for: book))
+                        BookCard(book: book, fileURL: book.fileURL)
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
                         if isActiveSection {
                             Button {
-                                controller.markUnread(book: book)
+                                library.markUnread(book: book)
                             } label: {
                                 Label("Mark as Unread", systemImage: "arrow.uturn.backward.circle")
                             }
 
                             Button(role: .destructive) {
-                                controller.removeFromActive(book: book)
+                                library.removeFromActive(book: book)
                             } label: {
                                 Label("Remove from Active", systemImage: "trash")
                             }
@@ -330,7 +356,7 @@ private func displayPath(for url: URL) -> String {
 }
 
 struct SettingsView: View {
-    @ObservedObject var controller: LibraryController
+    @ObservedObject var library: LibraryModel
     @Environment(\.dismiss) private var dismiss
 
     @State private var isPickingTrackingDirectory = false
@@ -346,7 +372,7 @@ struct SettingsView: View {
                     )
                 ) {
                     HStack {
-                        if let url = controller.trackingDirectoryURL {
+                        if let url = library.trackingDirectoryURL {
                             Text(displayPath(for: url))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
@@ -370,10 +396,10 @@ struct SettingsView: View {
                     switch result {
                     case .success(let urls):
                         if let firstURL = urls.first {
-                            controller.handlePickedTrackingDirectory(.success(firstURL))
+                            library.handlePickedTrackingDirectory(.success(firstURL))
                         }
                     case .failure(let error):
-                        controller.handlePickedTrackingDirectory(.failure(error))
+                        library.handlePickedTrackingDirectory(.failure(error))
                     }
                 }
 
@@ -384,14 +410,14 @@ struct SettingsView: View {
                     )
                 ) {
                     List {
-                        ForEach(Array(controller.localLibraries.enumerated()), id: \.element) { index, url in
+                        ForEach(Array(library.localLibraries.enumerated()), id: \.element) { index, url in
                             Text(displayPath(for: url))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
                         .onDelete { indexSet in
                             for index in indexSet {
-                                controller.removeLocalLibrary(at: index)
+                                library.removeLocalLibrary(at: index)
                             }
                         }
                     }
@@ -410,10 +436,10 @@ struct SettingsView: View {
                     switch result {
                     case .success(let urls):
                         if let firstURL = urls.first {
-                            controller.handlePickedLocalLibrary(.success(firstURL))
+                            library.handlePickedLocalLibrary(.success(firstURL))
                         }
                     case .failure(let error):
-                        controller.handlePickedLocalLibrary(.failure(error))
+                        library.handlePickedLocalLibrary(.failure(error))
                     }
                 }
             }

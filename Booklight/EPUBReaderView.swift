@@ -191,7 +191,10 @@ final class EPUBScrollProxy: ObservableObject {
 struct EPUBBookView: View {
     let book: Book
     let bookURL: URL
-    @ObservedObject var controller: LibraryController
+    @ObservedObject var library: LibraryModel
+    /// Progress shown in the window title; only updated from real reading
+    /// positions, not while search is jumping around.
+    @Binding var displayedProgress: Double?
     let syncToken: UUID?
 
     @State private var document: EPUBDocument?
@@ -231,7 +234,7 @@ struct EPUBBookView: View {
                         let clampedChapterProgress = chapterProgress.clampedToUnit
                         let clampedOverall = overallProgress.clampedToUnit
 
-                        controller.saveEPUBPosition(
+                        library.saveEPUBPosition(
                             for: book,
                             chapterIndex: clampedIndex,
                             chapterPath: document.spine[clampedIndex].href,
@@ -241,7 +244,7 @@ struct EPUBBookView: View {
                         // Update title progress only when not searching, so the title
                         // reflects the actual reading position rather than search matches.
                         if !showSearch {
-                            controller.openBookProgress = clampedOverall
+                            displayedProgress = clampedOverall
                         }
                     }
                 } else if isPreparing {
@@ -321,13 +324,13 @@ struct EPUBBookView: View {
         .onKeyPress(characters: .init(charactersIn: "+="), phases: .down) { keyPress in
             guard keyPress.modifiers.contains(.shift) else { return .ignored }
             scrollProxy.increaseFontSize()
-            controller.saveEPUBFontSize(for: book, fontSizePercent: scrollProxy.fontSizePercent)
+            library.saveEPUBFontSize(for: book, fontSizePercent: scrollProxy.fontSizePercent)
             return .handled
         }
         .onKeyPress(characters: .init(charactersIn: "-_"), phases: .down) { keyPress in
             guard keyPress.modifiers.contains(.shift) else { return .ignored }
             scrollProxy.decreaseFontSize()
-            controller.saveEPUBFontSize(for: book, fontSizePercent: scrollProxy.fontSizePercent)
+            library.saveEPUBFontSize(for: book, fontSizePercent: scrollProxy.fontSizePercent)
             return .handled
         }
         .toolbar(.hidden, for: .navigationBar)
@@ -335,7 +338,7 @@ struct EPUBBookView: View {
             // Restore saved font size preference before the document loads,
             // so it's ready to apply when the web view finishes navigation.
             scrollProxy.fontSizePercent = book.progressState?.epubFontSizePercent ?? 100
-            controller.markOpened(book)
+            library.markOpened(book)
             await loadDocument()
         }
     }

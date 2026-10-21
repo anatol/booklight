@@ -145,6 +145,23 @@ final class EPUBScrollProxy: ReaderEngine {
         webView?.evaluateJavaScript("window.readerJumpBack && window.readerJumpBack();")
     }
 
+    // MARK: - Theme
+
+    @ObservationIgnored var theme: ReaderTheme = .light
+
+    /// Script that sets the theme attribute the combined document's CSS keys off.
+    static func themeScript(for theme: ReaderTheme) -> String {
+        "document.documentElement.setAttribute('data-theme', '\(theme.rawValue)');"
+    }
+
+    func apply(theme: ReaderTheme) {
+        self.theme = theme
+        guard let webView else { return }
+        webView.evaluateJavaScript(Self.themeScript(for: theme))
+        webView.scrollView.backgroundColor = theme.uiBackground
+        webView.underPageBackgroundColor = theme.uiBackground
+    }
+
     // MARK: - Table of contents
 
     var tableOfContents: [ReaderTOCEntry] = []
@@ -255,6 +272,7 @@ struct EPUBBookView: View {
     /// Initial scroll target computed from saved progress when the document loads.
     @State private var initialScrollTarget: EPUBScrollTarget?
     @State private var session = ReaderSession(engine: EPUBScrollProxy())
+    @AppStorage(ReaderTheme.storageKey) private var theme: ReaderTheme = .light
 
     var body: some View {
         ReaderScaffold(session: session, progress: displayedProgress) {
@@ -304,6 +322,11 @@ struct EPUBBookView: View {
                         "Could Not Open EPUB", systemImage: "exclamationmark.triangle", description: Text(loadError ?? "Unknown error"))
                 }
             }
+        }
+        .background(theme.background)
+        .preferredColorScheme(theme.colorScheme)
+        .onChange(of: theme, initial: true) { _, newTheme in
+            session.engine.apply(theme: newTheme)
         }
         .task(id: book.id) {
             // Restore saved font size preference before the document loads,
@@ -424,9 +447,19 @@ private struct EPUBWebView: UIViewRepresentable {
                 injectionTime: .atDocumentEnd,
                 forMainFrameOnly: true
             ))
+        // Set the theme before first paint so dark books don't flash white.
+        contentController.addUserScript(
+            WKUserScript(
+                source: EPUBScrollProxy.themeScript(for: scrollProxy.theme),
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            ))
         configuration.userContentController = contentController
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.isOpaque = false
+        webView.scrollView.backgroundColor = scrollProxy.theme.uiBackground
+        webView.underPageBackgroundColor = scrollProxy.theme.uiBackground
         webView.navigationDelegate = context.coordinator
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         // The reader's own scrubber replaces the system scroll indicator.

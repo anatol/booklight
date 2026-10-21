@@ -34,6 +34,15 @@ struct ReaderCornerControls<Engine: ReaderEngine>: View {
                 .accessibilityLabel("Table of contents")
             }
 
+            Menu {
+                ReaderThemePicker()
+            } label: {
+                RoundGlyph(systemName: "circle.lefthalf.filled")
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Theme")
+
             if engine.supportsTextSize {
                 Menu {
                     Button("Larger Text", systemImage: "textformat.size.larger") {

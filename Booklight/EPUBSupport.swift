@@ -135,11 +135,11 @@ enum EPUBPreparation {
 /// Combines all EPUB spine chapters into a single HTML document for continuous scrolling.
 /// Each chapter's body content is extracted, resource paths are rewritten to be relative
 /// to the extraction root, and everything is wrapped in chapter dividers.
-/// The result is cached as `_combined-v9.html` in the extraction directory — it's automatically
+/// The result is cached as `_combined-v10.html` in the extraction directory — it's automatically
 /// invalidated when the EPUB is re-extracted (the directory is wiped on version change).
 enum EPUBCombiner {
     /// Builds (or returns cached) combined HTML from all spine items.
-    /// - Returns: URL of the `_combined-v9.html` file in the extraction directory.
+    /// - Returns: URL of the `_combined-v10.html` file in the extraction directory.
     static func buildCombinedHTML(
         spine: [EPUBDocument.SpineItem],
         extractedRootURL: URL
@@ -147,7 +147,7 @@ enum EPUBCombiner {
         // The filename carries a layout version suffix so that bumping the reading
         // CSS below regenerates the combined document for already-extracted books
         // (rebuilding from the cached chapters is cheap — no re-unzip required).
-        let combinedURL = extractedRootURL.appending(path: "_combined-v9.html")
+        let combinedURL = extractedRootURL.appending(path: "_combined-v10.html")
 
         // If the combined file already exists (from a previous open), reuse it.
         if FileManager.default.fileExists(atPath: combinedURL.path()) {
@@ -334,6 +334,21 @@ enum EPUBCombiner {
             li > ul, li > ol { margin-top: 0.4em; margin-bottom: 0.4em; }
             /* Definition lists: indent definitions under their terms. */
             dd { margin-left: 1.75em; }
+
+            /* Reading themes: the reader sets data-theme on <html>. Light keeps the
+               book's own styling; sepia and dark recolor everything so text stays
+               legible regardless of the colors the EPUB hard-codes. */
+            html[data-theme="sepia"], html[data-theme="sepia"] body {
+                background-color: #f4ecd8 !important; color: #5b4636 !important;
+            }
+            html[data-theme="dark"], html[data-theme="dark"] body {
+                background-color: #1c1c1e !important; color: #e4e4e6 !important;
+            }
+            html[data-theme="sepia"] body *, html[data-theme="dark"] body * {
+                color: inherit !important; background-color: transparent !important;
+            }
+            /* Diagrams with transparent backgrounds assume a light page. */
+            html[data-theme="dark"] img { background-color: #ffffff !important; }
 
             /* Divider between chapters for visual separation */
             .epub-chapter-divider {

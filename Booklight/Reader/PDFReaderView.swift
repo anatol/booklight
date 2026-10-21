@@ -293,6 +293,7 @@ struct PDFBookView: View {
     @Binding var displayedProgress: Double?
     let syncToken: UUID?
     @State private var session = ReaderSession(engine: PDFScrollProxy())
+    @AppStorage(ReaderTheme.storageKey) private var theme: ReaderTheme = .light
 
     var body: some View {
         ReaderScaffold(session: session, progress: displayedProgress) {
@@ -324,11 +325,13 @@ struct PDFBookView: View {
                     displayedProgress = readingPosition.progress.clampedToUnit
                 }
             }
+            .readerPageTheme(theme)
         }
         .task(id: book.id) {
             library.markOpened(book)
         }
-        .background(Color(uiColor: .secondarySystemBackground))
+        .background(theme == .dark ? Color.black : theme.background)
+        .preferredColorScheme(theme.colorScheme)
     }
 }
 

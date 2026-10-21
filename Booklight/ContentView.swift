@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var browser = LibraryBrowserState()
     @State private var showingSettings = false
     @State private var isPickingTrackingDirectory = false
+    @State private var isPickingLocalLibrary = false
     /// Title of the open reader, if any; keeps the window title on the book
     /// while the library view underneath re-renders.
     @State private var readerTitle: String?
@@ -25,6 +26,8 @@ struct ContentView: View {
                 library: library,
                 browser: browser,
                 isPickingTrackingDirectory: $isPickingTrackingDirectory,
+                isPickingLocalLibrary: $isPickingLocalLibrary,
+                showingSettings: $showingSettings,
                 readerTitle: $readerTitle
             )
             .navigationTitle(readerTitle ?? Self.windowTitle(for: library.trackingDirectoryURL))
@@ -78,6 +81,20 @@ struct ContentView: View {
                 library.handlePickedTrackingDirectory(.failure(error))
             }
         }
+        .fileImporter(
+            isPresented: $isPickingLocalLibrary,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let firstURL = urls.first {
+                    library.handlePickedLocalLibrary(.success(firstURL))
+                }
+            case .failure(let error):
+                library.handlePickedLocalLibrary(.failure(error))
+            }
+        }
         .alert(
             "Problem",
             isPresented: Binding(
@@ -122,6 +139,8 @@ private struct LibraryContentView: View {
     var library: LibraryModel
     var browser: LibraryBrowserState
     @Binding var isPickingTrackingDirectory: Bool
+    @Binding var isPickingLocalLibrary: Bool
+    @Binding var showingSettings: Bool
     @Binding var readerTitle: String?
     @Environment(\.isSearching) private var isSearching
 
@@ -166,16 +185,40 @@ private struct LibraryContentView: View {
         .background(Color(uiColor: .systemGroupedBackground))
     }
 
+    private var noBooksView: some View {
+        ContentUnavailableView {
+            Label("No Books Found", systemImage: "books.vertical")
+        } description: {
+            Text(
+                library.localLibraries.isEmpty
+                    ? "The tracking directory has no PDF or EPUB files yet. Add a local library to browse your collection."
+                    : "No PDF or EPUB files were found in the tracking directory or your \(library.localLibraries.count == 1 ? "local library" : "\(library.localLibraries.count) local libraries")."
+            )
+        } actions: {
+            Button("Add Local Library") {
+                isPickingLocalLibrary = true
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button("Open Settings") {
+                showingSettings = true
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private var libraryView: some View {
         let sections = browser.sections(of: library.books)
         return ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 if library.books.isEmpty {
-                    Text("No PDF or EPUB files found in the selected folder.")
-                        .foregroundStyle(.secondary)
+                    // Don't claim the library is empty while the first scan is running.
+                    if library.hasLoadedOnce && !library.isLoading {
+                        noBooksView
+                    }
                 } else if sections.active.isEmpty && sections.other.isEmpty && !browser.debouncedSearchText.isEmpty {
-                    Text("No books match “\(browser.searchText)”")
-                        .foregroundStyle(.secondary)
+                    ContentUnavailableView.search(text: browser.searchText)
+                        .frame(maxWidth: .infinity)
                 } else {
                     if !sections.active.isEmpty {
                         BookGallerySection(

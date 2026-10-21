@@ -11,6 +11,9 @@ final class LibraryModel {
     private(set) var localLibraries: [URL] = []
     private(set) var books: [Book] = []
     private(set) var isLoading = false
+    /// True once the first scan has finished, so screens can tell "still
+    /// scanning" from "scanned and found nothing".
+    private(set) var hasLoadedOnce = false
     var errorMessage: String?
     /// Bumped per book when another device changed its progress, telling an open
     /// reader to jump to the new position.
@@ -66,6 +69,7 @@ final class LibraryModel {
         do {
             try folders.selectTrackingDirectory(at: result.get())
             trackingDirectoryURL = folders.trackingDirectoryURL
+            hasLoadedOnce = false
             configureTrackingServices()
             refresh(silently: false, restart: true)
         } catch {
@@ -198,9 +202,11 @@ final class LibraryModel {
                 if refreshed != self.books {
                     self.books = refreshed
                 }
+                self.hasLoadedOnce = true
                 self.errorMessage = nil
             } catch {
                 guard !Task.isCancelled, self?.refreshGeneration == generation else { return }
+                self?.hasLoadedOnce = true
                 self?.errorMessage = error.localizedDescription
             }
         }

@@ -64,6 +64,8 @@ struct ReaderCornerControls<Engine: ReaderEngine>: View {
         }
         .buttonStyle(.plain)
         .padding(12)
+        // Keep clear of the window controls ("Close Window") shown in full screen.
+        .padding(.top, 50)
     }
 }
 
